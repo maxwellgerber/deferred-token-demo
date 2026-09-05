@@ -48,11 +48,11 @@
         not part of DTR itself. Subject and resource are fixed for this scenario; pick a
         scope and mint.
       </p>
-      <label>Subject</label>
-      <input type="text" value="alice@example.com" disabled>
-      <label>Resource</label>
-      <input type="text" value="db://prod-orders" disabled>
-      <label>Scope</label>
+      <label for="f-subject">Subject</label>
+      <input type="text" id="f-subject" value="alice@example.com" disabled>
+      <label for="f-resource">Resource</label>
+      <input type="text" id="f-resource" value="db://prod-orders" disabled>
+      <label for="f-scope">Scope</label>
       <select id="f-scope">
         <option value="database.read">database.read</option>
         <option value="database.delete">database.delete</option>

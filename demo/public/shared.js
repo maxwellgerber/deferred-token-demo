@@ -5,6 +5,16 @@ const logBody = document.getElementById("log-body");
 const logCount = document.getElementById("log-count");
 let events = 0;
 
+// Real-time state changes (poll status, new log lines) need to be announced to screen readers,
+// not just visually updated.
+logBody.setAttribute("role", "log");
+logBody.setAttribute("aria-live", "polite");
+const statusPillEl = document.getElementById("status-pill");
+if (statusPillEl) {
+  statusPillEl.setAttribute("role", "status");
+  statusPillEl.setAttribute("aria-live", "polite");
+}
+
 function appendLog(actor, message, ts = Date.now(), detail = null) {
   events += 1;
   logCount.textContent = `${events} event${events === 1 ? "" : "s"}`;
@@ -60,12 +70,26 @@ function setupMenu() {
   const menuBtn = document.getElementById("menu-btn");
   const menuDropdown = document.getElementById("menu-dropdown");
   if (!menuBtn || !menuDropdown) return;
+  menuBtn.setAttribute("aria-haspopup", "true");
+  menuBtn.setAttribute("aria-expanded", "false");
+  const closeMenu = () => {
+    menuDropdown.hidden = true;
+    menuBtn.setAttribute("aria-expanded", "false");
+  };
   menuBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    menuDropdown.hidden = !menuDropdown.hidden;
+    const opening = menuDropdown.hidden;
+    menuDropdown.hidden = !opening;
+    menuBtn.setAttribute("aria-expanded", String(opening));
   });
   document.addEventListener("click", (e) => {
-    if (!menuDropdown.hidden && !menuDropdown.contains(e.target) && e.target !== menuBtn) menuDropdown.hidden = true;
+    if (!menuDropdown.hidden && !menuDropdown.contains(e.target) && e.target !== menuBtn) closeMenu();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !menuDropdown.hidden) {
+      closeMenu();
+      menuBtn.focus();
+    }
   });
 }
 setupMenu();
@@ -75,6 +99,20 @@ function setupTrayResize() {
   const tray = document.querySelector("footer.tray");
   const handle = document.getElementById("tray-resize-handle");
   if (!tray || !handle) return;
+  handle.setAttribute("role", "separator");
+  handle.setAttribute("aria-orientation", "horizontal");
+  handle.setAttribute("aria-label", "Resize log tray");
+  handle.setAttribute("tabindex", "0");
+  handle.addEventListener("keydown", (e) => {
+    const step = 24;
+    let delta = 0;
+    if (e.key === "ArrowUp") delta = step;
+    else if (e.key === "ArrowDown") delta = -step;
+    else return;
+    e.preventDefault();
+    const newHeight = Math.min(Math.max(tray.getBoundingClientRect().height + delta, 80), window.innerHeight - 160);
+    tray.style.height = `${newHeight}px`;
+  });
   handle.addEventListener("mousedown", (e) => {
     e.preventDefault();
     const startY = e.clientY;
