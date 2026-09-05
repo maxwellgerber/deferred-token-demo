@@ -64,7 +64,47 @@ interface PendingAuthCode {
   recipient: string;
   memo: string;
   scope: string;
+  authorizationDetails: unknown[];
   redeemed: boolean;
+}
+
+// The fraud-review scenario carries the transfer's terms as an RFC 9396 authorization_details
+// entry (type=payment_initiation) rather than ad hoc amount/recipient/memo query params —
+// consistent with how a real client would express a payment-initiation request. See
+// https://www.rfc-editor.org/rfc/rfc9396 for the worked example this is modeled on.
+interface PaymentInitiationDetail {
+  type?: string;
+  actions?: string[];
+  instructedAmount?: { currency?: string; amount?: string };
+  creditorAccount?: { identifier?: string };
+  remittanceInformationUnstructured?: string;
+}
+
+function parsePaymentAuthorizationDetails(raw: string | null): {
+  details: unknown[];
+  amount: string;
+  recipient: string;
+  memo: string;
+} {
+  let details: unknown[] = [];
+  try {
+    const parsed = JSON.parse(raw ?? "[]");
+    if (Array.isArray(parsed)) details = parsed;
+  } catch {
+    details = [];
+  }
+  const payment = (details.find((d) => (d as PaymentInitiationDetail)?.type === "payment_initiation") ??
+    {}) as PaymentInitiationDetail;
+  return {
+    details,
+    amount: payment.instructedAmount?.amount ?? "0.00",
+    recipient: payment.creditorAccount?.identifier ?? "",
+    memo: payment.remittanceInformationUnstructured ?? "",
+  };
+}
+
+function escapeHtmlAttr(str: string): string {
+  return str.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 type RecipientHistory = Record<string, { total: number; count: number }>;
@@ -107,6 +147,17 @@ export class DemoSession extends DurableObject<Env> {
     const entry = this.recipientHistory[recipient];
     if (!entry || entry.count === 0) return "no prior transfers in the last 30 days";
     return `$${entry.total.toLocaleString()} across ${entry.count} transfer${entry.count === 1 ? "" : "s"} in the last 30 days`;
+  }
+
+  // A request that resolves synchronously (already-granted document, at-or-under-threshold
+  // transfer) never creates a deferral — but if a *previous* request left one behind (e.g. a
+  // denied doc-2), the AS panel would otherwise keep showing that stale deferral as if it were
+  // this request's outcome. Clear it and broadcast so the panel honestly reflects "no deferral."
+  private async clearDeferralForSynchronousResolution() {
+    if (!this.deferral) return;
+    this.deferral = null;
+    await this.persist();
+    this.broadcastState();
   }
 
   private async bumpRecipientHistory(recipient: string, amount: number) {
@@ -154,6 +205,7 @@ export class DemoSession extends DurableObject<Env> {
     if (url.pathname === "/authorize" && request.method === "POST") return this.handleAuthorizeDecision(request);
     if (url.pathname === "/admin/mint-assertion" && request.method === "POST") return this.handleMintAssertion(request);
     if (url.pathname === "/admin/decide" && request.method === "POST") return this.handleAdminDecide(request);
+    if (url.pathname === "/admin/revoke-document" && request.method === "POST") return this.handleRevokeDocument(request);
     if (url.pathname === "/admin/state" && request.method === "GET")
       return jsonResponse(200, {
         state: this.deferral,
@@ -237,14 +289,12 @@ export class DemoSession extends DurableObject<Env> {
   private handleAuthorizePage(url: URL, sessionId: string): Response {
     const params = url.searchParams;
     const redirectUri = params.get("redirect_uri") ?? "";
-    const amount = params.get("amount") ?? "0.00";
-    const recipient = params.get("recipient") ?? "";
-    const memo = params.get("memo") ?? "";
     const scope = params.get("scope") ?? "wire_transfers.initiate";
     const state = params.get("state") ?? "";
+    const { details, amount, recipient, memo } = parsePaymentAuthorizationDetails(params.get("authorization_details"));
     this.log(`GET /authorize — rendering consent screen for alice@example.com ($${amount} to ${recipient})`);
     return new Response(
-      renderAuthorizePage({ sessionId, redirectUri, amount, recipient, memo, scope, state }),
+      renderAuthorizePage({ sessionId, redirectUri, authorizationDetails: details, amount, recipient, memo, scope, state }),
       { headers: { "Content-Type": "text/html" } },
     );
   }
@@ -252,12 +302,10 @@ export class DemoSession extends DurableObject<Env> {
   private async handleAuthorizeDecision(request: Request): Promise<Response> {
     const form = await request.formData();
     const redirectUri = String(form.get("redirect_uri") ?? "");
-    const amount = String(form.get("amount") ?? "0.00");
-    const recipient = String(form.get("recipient") ?? "");
-    const memo = String(form.get("memo") ?? "");
     const scope = String(form.get("scope") ?? "wire_transfers.initiate");
     const state = String(form.get("state") ?? "");
     const decision = form.get("decision");
+    const { details, amount, recipient, memo } = parsePaymentAuthorizationDetails(String(form.get("authorization_details") ?? "[]"));
 
     const redirectUrl = new URL(redirectUri);
     if (state) redirectUrl.searchParams.set("state", state);
@@ -275,6 +323,7 @@ export class DemoSession extends DurableObject<Env> {
       recipient,
       memo,
       scope,
+      authorizationDetails: details,
       redeemed: false,
     };
     await this.persistAuthCode();
@@ -405,6 +454,7 @@ export class DemoSession extends DurableObject<Env> {
 
     if (documentId && this.grantedDocuments.includes(documentId)) {
       this.log(`policy: ${documentId} was already granted to this client — issuing a token immediately, no deferral needed`);
+      await this.clearDeferralForSynchronousResolution();
       return tokenSuccessResponse({
         access_token: `demo_at_${generateOpaqueId(96)}`,
         token_type: "Bearer",
@@ -455,7 +505,7 @@ export class DemoSession extends DurableObject<Env> {
       return jsonResponse(400, { error: "invalid_grant" });
     }
 
-    const { subject, amount, recipient, memo, scope } = this.pendingAuthCode;
+    const { subject, amount, recipient, memo, scope, authorizationDetails } = this.pendingAuthCode;
     const amountNum = Number.parseFloat(amount) || 0;
     this.pendingAuthCode.redeemed = true;
     await this.persistAuthCode();
@@ -465,11 +515,13 @@ export class DemoSession extends DurableObject<Env> {
     if (amountNum <= FRAUD_REVIEW_THRESHOLD) {
       this.log(`policy: $${amount} is at or under the $${FRAUD_REVIEW_THRESHOLD.toLocaleString()} fraud-review threshold — issuing the token immediately`);
       await this.bumpRecipientHistory(recipient, amountNum);
+      await this.clearDeferralForSynchronousResolution();
       return tokenSuccessResponse({
         access_token: `demo_at_${generateOpaqueId(96)}`,
         token_type: "Bearer",
         expires_in: 3600,
         scope,
+        authorization_details: authorizationDetails,
       });
     }
 
@@ -492,6 +544,7 @@ export class DemoSession extends DurableObject<Env> {
       recipientStanding: ACCOUNT_STANDING[recipient] ?? "unknown",
       recipientHistory: this.formatHistory(recipient),
     });
+    this.deferral!.authorizationDetails = authorizationDetails;
     await this.persist();
     this.broadcastState();
     this.log(`returning authorization_pending, deferral_code=${this.deferral!.deferral_code.slice(0, 12)}… (no interaction_uri — the end user already consented; only the reviewer's decision remains)`);
@@ -693,6 +746,21 @@ export class DemoSession extends DurableObject<Env> {
     this.broadcastState();
     return jsonResponse(200, { ok: true, status: this.deferral.status });
   }
+
+  // Resource-owner control for the RAR scenario's stateful grant: undo a previous approval so
+  // the next request for that document goes through the review process again.
+  private async handleRevokeDocument(request: Request): Promise<Response> {
+    const body = (await request.json().catch(() => ({}))) as { document_id?: string };
+    const docId = body.document_id;
+    if (!docId) return jsonResponse(400, { error: "invalid_request", error_description: "missing document_id" });
+    const idx = this.grantedDocuments.indexOf(docId);
+    if (idx === -1) return jsonResponse(404, { error: "not_found", error_description: "document was not granted" });
+    this.grantedDocuments.splice(idx, 1);
+    await this.persistGrantedDocuments();
+    this.log(`resource owner revoked ${docId} — the next request for it will require approval again`);
+    this.broadcastState();
+    return jsonResponse(200, { ok: true, grantedDocuments: this.grantedDocuments });
+  }
 }
 
 function renderInteractPage(opts: {
@@ -745,6 +813,7 @@ function renderInteractPage(opts: {
 function renderAuthorizePage(opts: {
   sessionId: string;
   redirectUri: string;
+  authorizationDetails: unknown[];
   amount: string;
   recipient: string;
   memo: string;
@@ -753,11 +822,12 @@ function renderAuthorizePage(opts: {
 }): string {
   const style = `
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #101114; color: #eceef2; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
-    .card { max-width: 420px; background: #17181d; border: 1px solid #2a2c34; border-radius: 12px; padding: 2rem; }
+    .card { max-width: 440px; background: #17181d; border: 1px solid #2a2c34; border-radius: 12px; padding: 2rem; }
     h1 { font-size: 1.05rem; margin-top: 0; color: #9a9fac; font-weight: 600; }
     dl { display: grid; grid-template-columns: auto 1fr; gap: .3rem 1rem; font-size: .9rem; color: #9a9fac; margin: 1.2rem 0; }
     dt { font-weight: 600; color: #eceef2; }
     dd { margin: 0; word-break: break-all; }
+    pre { background: #1b1c22; border: 1px solid #2a2c34; border-radius: 8px; padding: .7rem .8rem; font-size: .74rem; line-height: 1.5; overflow-x: auto; color: #9a9fac; margin: 0 0 1.2rem; }
     button { font-size: .95rem; font-weight: 600; padding: .6rem 1.2rem; border-radius: 8px; border: none; cursor: pointer; margin-right: .6rem; }
     .approve { background: #4fd188; color: #05170c; }
     .deny { background: #ff6b64; color: #200604; }
@@ -772,11 +842,11 @@ function renderAuthorizePage(opts: {
         <dt>Memo</dt><dd>${opts.memo || "(none)"}</dd>
         <dt>Scope</dt><dd>${opts.scope}</dd>
       </dl>
+      <p style="font-size:.78rem; color:#565a66; margin:0 0 .4rem;">authorization_details (RFC 9396):</p>
+      <pre>${escapeHtmlAttr(JSON.stringify(opts.authorizationDetails, null, 2))}</pre>
       <form method="POST" action="/authorize?session=${encodeURIComponent(opts.sessionId)}">
-        <input type="hidden" name="redirect_uri" value="${opts.redirectUri}">
-        <input type="hidden" name="amount" value="${opts.amount}">
-        <input type="hidden" name="recipient" value="${opts.recipient}">
-        <input type="hidden" name="memo" value="${opts.memo}">
+        <input type="hidden" name="redirect_uri" value="${escapeHtmlAttr(opts.redirectUri)}">
+        <input type="hidden" name="authorization_details" value="${escapeHtmlAttr(JSON.stringify(opts.authorizationDetails))}">
         <input type="hidden" name="scope" value="${opts.scope}">
         <input type="hidden" name="state" value="${opts.state}">
         <button class="approve" name="decision" value="approve">Approve</button>

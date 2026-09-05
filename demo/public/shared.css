@@ -94,6 +94,13 @@ dl.kv dd { margin: 0; word-break: break-all; }
   border: none;
 }
 
+#granted-list { list-style: none; }
+#granted-list li {
+  display: flex; align-items: center; justify-content: space-between; gap: .6rem;
+  padding: .3rem 0;
+}
+#granted-list .revoke-btn { font-size: .72rem; padding: .2rem .55rem; flex-shrink: 0; }
+
 footer.tray {
   flex-shrink: 0; height: 30vh; min-height: 80px; border-top: 1px solid var(--border); display: flex;
   flex-direction: column; background: var(--bg-raised); position: relative;

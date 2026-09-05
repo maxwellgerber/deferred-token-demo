@@ -105,7 +105,26 @@ function renderGrantedList() {
     el.textContent = "None yet — every document starts ungranted.";
     return;
   }
-  el.innerHTML = grantedDocuments.map((id) => `<li>${escapeHtml(docLabel(id))}</li>`).join("");
+  el.innerHTML = grantedDocuments
+    .map(
+      (id) => `
+        <li>
+          <span>${escapeHtml(docLabel(id))}</span>
+          <button class="btn secondary revoke-btn" data-doc-id="${escapeHtml(id)}">Revoke</button>
+        </li>
+      `,
+    )
+    .join("");
+  el.querySelectorAll(".revoke-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      await fetch(`${IDP}/admin/revoke-document?session=${encodeURIComponent(sessionId)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document_id: btn.dataset.docId }),
+      });
+    });
+  });
 }
 
 function renderGrantedNote() {
@@ -122,6 +141,8 @@ function renderGrantedNote() {
 // --- Send token request ---
 document.getElementById("send-btn").addEventListener("click", async () => {
   document.getElementById("send-btn").disabled = true;
+  document.getElementById("result-card").style.display = "none";
+  DTR.beginAttempt();
   setStatus("pending", "sending token request…");
   const details = buildAuthorizationDetails();
   const params = new URLSearchParams({
@@ -147,6 +168,7 @@ document.getElementById("send-btn").addEventListener("click", async () => {
     document.getElementById("result-card").style.display = "block";
     document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
     document.getElementById("send-btn").disabled = false;
+    DTR.endAttempt();
     return;
   }
 
@@ -156,6 +178,7 @@ document.getElementById("send-btn").addEventListener("click", async () => {
     setStatus("pending", "authorization_pending — waiting on the resource owner");
     startPolling(data.deferral_code, data.interval);
   } else {
+    DTR.endAttempt();
     setStatus("error", data.error ?? "unexpected response");
     document.getElementById("send-btn").disabled = false;
   }
@@ -185,6 +208,8 @@ async function poll(code) {
     setStatus("ok", "resolved");
     document.getElementById("result-card").style.display = "block";
     document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
+    document.getElementById("send-btn").disabled = false;
+    DTR.endAttempt();
     return;
   }
 
@@ -202,23 +227,29 @@ async function poll(code) {
     case "access_denied":
       setStatus("error", "access_denied");
       document.getElementById("send-btn").disabled = false;
+      DTR.endAttempt();
       return;
     case "expired_token":
       setStatus("error", "expired_token");
       document.getElementById("send-btn").disabled = false;
+      DTR.endAttempt();
       return;
     default:
       setStatus("error", data.error ?? "unknown error");
       document.getElementById("send-btn").disabled = false;
+      DTR.endAttempt();
       return;
   }
 }
 
 function schedulePoll(code) {
   clearTimeout(pollTimer);
-  DTR.armResume(() => poll(code));
-  if (DTR.pollingPaused) return;
+  if (DTR.pollingPaused) {
+    DTR.armResume(() => poll(code));
+    return;
+  }
   pollTimer = setTimeout(() => poll(code), pollInterval * 1000);
+  DTR.armResume(() => poll(code), pollTimer);
 }
 
 function setStatus(kind, text) {
@@ -243,6 +274,7 @@ document.getElementById("deny-btn").addEventListener("click", () => decide("deny
 // --- Reset ---
 document.getElementById("reset-btn").addEventListener("click", async () => {
   clearTimeout(pollTimer);
+  DTR.endAttempt();
   await fetch(`${IDP}/admin/reset?session=${encodeURIComponent(sessionId)}`, { method: "POST" });
   document.getElementById("send-btn").disabled = false;
   document.getElementById("result-card").style.display = "none";

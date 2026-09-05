@@ -97,28 +97,73 @@ function setupTrayResize() {
 setupTrayResize();
 
 // --- Pause/resume polling ---
-// Scenario app.js files call DTR.armResume(() => poll(code)) each time they schedule a poll,
-// and check DTR.pollingPaused before actually scheduling the next fetch.
+// Contract for scenario app.js files:
+// - Call DTR.beginAttempt() the moment a new request is sent (re-arms pause, clears terminal).
+// - Call DTR.armResume(() => poll(code), timerId) every time schedulePoll() sets a timer, so
+//   pausing can cancel a timer that was already scheduled before the pause click (not just
+//   block *future* scheduling — a plain "check a flag before scheduling" check is not enough).
+// - Call DTR.endAttempt() the moment the attempt reaches ANY terminal state (success, denied,
+//   expired, or an unexpected error) so a stale "Resume polling" click can't re-poll an
+//   already-redeemed/denied code and clobber the result that's already on screen.
 window.DTR = {
   pollingPaused: false,
   resumeCallback: null,
-  armResume(cb) {
+  activeTimer: null,
+  terminal: true, // no active attempt until beginAttempt() is called
+
+  armResume(cb, timerId) {
     this.resumeCallback = cb;
+    this.activeTimer = timerId ?? null;
+  },
+
+  clearActiveTimer() {
+    if (this.activeTimer) clearTimeout(this.activeTimer);
+    this.activeTimer = null;
+  },
+
+  beginAttempt() {
+    this.terminal = false;
+    this.pollingPaused = false;
+    this.resumeCallback = null;
+    this.clearActiveTimer();
+    const btn = document.getElementById("pause-btn");
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = "Pause polling";
+      btn.classList.remove("paused");
+    }
+  },
+
+  endAttempt() {
+    this.terminal = true;
+    this.pollingPaused = false;
+    this.resumeCallback = null;
+    this.clearActiveTimer();
+    const btn = document.getElementById("pause-btn");
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = "No polling";
+      btn.classList.remove("paused");
+    }
   },
 };
 
 function setupPauseButton() {
   const btn = document.getElementById("pause-btn");
   if (!btn) return;
+  btn.disabled = true; // no active attempt at page load
+  btn.textContent = "No polling";
   btn.addEventListener("click", () => {
+    if (window.DTR.terminal) return; // guard against a stale click after the attempt resolved
     window.DTR.pollingPaused = !window.DTR.pollingPaused;
     btn.textContent = window.DTR.pollingPaused ? "Resume polling" : "Pause polling";
     btn.classList.toggle("paused", window.DTR.pollingPaused);
-    if (!window.DTR.pollingPaused && window.DTR.resumeCallback) {
+    if (window.DTR.pollingPaused) {
+      window.DTR.clearActiveTimer();
+      appendLog("client", "polling paused");
+    } else if (window.DTR.resumeCallback) {
       appendLog("client", "polling resumed");
       window.DTR.resumeCallback();
-    } else if (window.DTR.pollingPaused) {
-      appendLog("client", "polling paused");
     }
   });
 }

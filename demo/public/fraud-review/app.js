@@ -78,11 +78,29 @@ function renderAsState(state) {
 let currentCode = null;
 let authPopup = null;
 document.getElementById("start-auth-btn").addEventListener("click", () => {
+  // Starting over: clear whatever a previous attempt left behind before doing anything else.
+  currentCode = null;
+  document.getElementById("send-btn").disabled = true;
+  document.getElementById("result-card").style.display = "none";
+  document.getElementById("auth-status").textContent = "";
+
   const amount = document.getElementById("f-amount").value;
   const recipient = document.getElementById("f-recipient").value;
   const memo = document.getElementById("f-memo").value;
   const state = crypto.randomUUID();
   const redirectUri = `${location.origin}/fraud-review/callback.html`;
+
+  // RFC 9396 Rich Authorization Requests — the transfer's terms travel as a structured
+  // authorization_details entry, not as flat amount/recipient/memo query params.
+  const authorizationDetails = [
+    {
+      type: "payment_initiation",
+      actions: ["initiate"],
+      instructedAmount: { currency: "USD", amount },
+      creditorAccount: { identifier: recipient },
+      remittanceInformationUnstructured: memo,
+    },
+  ];
 
   const url = new URL(`${IDP}/authorize`);
   url.searchParams.set("session", sessionId);
@@ -90,9 +108,7 @@ document.getElementById("start-auth-btn").addEventListener("click", () => {
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", "wire_transfers.initiate");
-  url.searchParams.set("amount", amount);
-  url.searchParams.set("recipient", recipient);
-  url.searchParams.set("memo", memo);
+  url.searchParams.set("authorization_details", JSON.stringify(authorizationDetails));
   url.searchParams.set("state", state);
 
   authPopup = window.open(url.toString(), "dtr-authorize", "width=460,height=560,menubar=no,toolbar=no,location=no,status=no");
@@ -121,6 +137,8 @@ window.addEventListener("message", (evt) => {
 document.getElementById("send-btn").addEventListener("click", async () => {
   if (!currentCode) return;
   document.getElementById("send-btn").disabled = true;
+  document.getElementById("auth-status").textContent = "Token request sent — waiting on the result.";
+  DTR.beginAttempt();
   setStatus("pending", "sending token request…");
   const params = new URLSearchParams({
     grant_type: "authorization_code",
@@ -141,10 +159,12 @@ document.getElementById("send-btn").addEventListener("click", async () => {
     appendLog("client", "received 200 OK — access_token issued synchronously (at or under the review threshold)", undefined, {
       response: { status: res.status, body: data },
     });
+    DTR.endAttempt();
     setStatus("ok", "resolved synchronously — no fraud review needed");
     document.getElementById("result-card").style.display = "block";
     document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
-    document.getElementById("send-btn").disabled = false;
+    document.getElementById("auth-status").textContent = "Code redeemed — click \"Start authorization\" to submit another transfer.";
+    currentCode = null; // redeemed — a new attempt needs a fresh code from "Start authorization"
     return;
   }
 
@@ -154,8 +174,10 @@ document.getElementById("send-btn").addEventListener("click", async () => {
     setStatus("pending", "authorization_pending — waiting on fraud review");
     startPolling(data.deferral_code, data.interval);
   } else {
+    DTR.endAttempt();
     setStatus("error", data.error ?? "unexpected response");
-    document.getElementById("send-btn").disabled = false;
+    document.getElementById("auth-status").textContent = "Something went wrong — click \"Start authorization\" to try again.";
+    currentCode = null;
   }
 });
 
@@ -180,9 +202,12 @@ async function poll(code) {
 
   if (res.ok) {
     appendLog("client", "received 200 OK — access_token issued", undefined, { response: { status: res.status, body: data } });
+    DTR.endAttempt();
     setStatus("ok", "resolved");
     document.getElementById("result-card").style.display = "block";
     document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
+    document.getElementById("auth-status").textContent = "Code redeemed — click \"Start authorization\" to submit another transfer.";
+    currentCode = null; // redeemed — a new attempt needs a fresh code from "Start authorization"
     return;
   }
 
@@ -198,25 +223,34 @@ async function poll(code) {
       schedulePoll(code);
       return;
     case "access_denied":
+      DTR.endAttempt();
       setStatus("error", "access_denied");
-      document.getElementById("send-btn").disabled = false;
+      document.getElementById("auth-status").textContent = "Request denied — click \"Start authorization\" to try again.";
+      currentCode = null;
       return;
     case "expired_token":
+      DTR.endAttempt();
       setStatus("error", "expired_token");
-      document.getElementById("send-btn").disabled = false;
+      document.getElementById("auth-status").textContent = "Deferral expired — click \"Start authorization\" to try again.";
+      currentCode = null;
       return;
     default:
+      DTR.endAttempt();
       setStatus("error", data.error ?? "unknown error");
-      document.getElementById("send-btn").disabled = false;
+      document.getElementById("auth-status").textContent = "Something went wrong — click \"Start authorization\" to try again.";
+      currentCode = null;
       return;
   }
 }
 
 function schedulePoll(code) {
   clearTimeout(pollTimer);
-  DTR.armResume(() => poll(code));
-  if (DTR.pollingPaused) return;
+  if (DTR.pollingPaused) {
+    DTR.armResume(() => poll(code));
+    return;
+  }
   pollTimer = setTimeout(() => poll(code), pollInterval * 1000);
+  DTR.armResume(() => poll(code), pollTimer);
 }
 
 function setStatus(kind, text) {
@@ -241,6 +275,7 @@ document.getElementById("deny-btn").addEventListener("click", () => decide("deny
 // --- Reset ---
 document.getElementById("reset-btn").addEventListener("click", async () => {
   clearTimeout(pollTimer);
+  DTR.endAttempt();
   await fetch(`${IDP}/admin/reset?session=${encodeURIComponent(sessionId)}`, { method: "POST" });
   currentCode = null;
   document.getElementById("auth-status").textContent = "";
