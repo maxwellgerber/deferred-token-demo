@@ -5,38 +5,43 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Deferred Token Response — Explore asynchronous OAuth authorization</title>
 <meta name="description" content="Explore how OAuth clients can wait for approvals and policy checks with Deferred Token Response. Try interactive demos with simulated requests and live protocol logs.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700;9..144,900&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root {
     color-scheme: light dark;
-    --bg: #ffffff;
-    --bg-raised: #f6f7f9;
-    --bg-code: #f1f2f5;
-    --border: #e2e4e9;
-    --text: #14151a;
-    --text-dim: #565a66;
-    --accent: #6d3ff2;
-    --accent-dim: #efe9fe;
-    --ok: #0f7b3f;
-    --pending: #a06400;
-    --error: #b3261e;
-    --link: #5227c9;
-    --mono: "SF Mono", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
-    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    /* warm paper + deep petrol teal, with amber/rust for pending/error states */
+    --bg: #f8f6f2;
+    --bg-raised: #f3f1ec;
+    --bg-code: #ecebe5;
+    --border: #ddd9d0;
+    --text: #201c14;
+    --text-dim: #6b6250;
+    --accent: #0d6e6e;
+    --accent-dim: #dcefec;
+    --ok: #1f7a4a;
+    --pending: #8f6a08;
+    --error: #ac3b2a;
+    --link: #0a5a5c;
+    --mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --serif: "Fraunces", Georgia, "Times New Roman", serif;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #101114;
-      --bg-raised: #17181d;
-      --bg-code: #1b1c22;
-      --border: #2a2c34;
-      --text: #eceef2;
-      --text-dim: #9a9fac;
-      --accent: #a37bff;
-      --accent-dim: #251b40;
-      --ok: #4fd188;
-      --pending: #e0b04a;
-      --error: #ff6b64;
-      --link: #b79bff;
+      --bg: #12181a;
+      --bg-raised: #1a2224;
+      --bg-code: #1d2628;
+      --border: #2c3739;
+      --text: #eef2f1;
+      --text-dim: #9caaa9;
+      --accent: #4fc3b8;
+      --accent-dim: #17302e;
+      --ok: #52c98a;
+      --pending: #e0a83f;
+      --error: #ee8172;
+      --link: #7fdcd0;
     }
   }
   * { box-sizing: border-box; }
@@ -49,6 +54,7 @@
     font-size: 16px;
   }
   a { color: var(--link); }
+  h1, h2, h3 { font-family: var(--serif); font-weight: 600; }
   code, pre { font-family: var(--mono); }
   code {
     background: var(--bg-code);
@@ -81,9 +87,10 @@
     border-bottom: 1px solid var(--border);
     flex-wrap: wrap;
   }
-  .brand { display: flex; align-items: baseline; gap: .6rem; font-weight: 700; }
+  .brand { display: flex; align-items: baseline; gap: .6rem; font-weight: 700; font-family: var(--serif); font-size: 1.15rem; }
   .brand small {
     font-weight: 500;
+    font-family: var(--sans);
     color: var(--text-dim);
     font-size: .72rem;
     border: 1px solid var(--border);
@@ -132,8 +139,15 @@
     font-weight: 700;
     margin-bottom: .6rem;
   }
-  .hero h1 { font-size: 2.1rem; margin: 0 0 .6rem; letter-spacing: -.01em; }
-  .hero .promise { font-size: 1.2rem; font-weight: 600; margin: .4rem 0 1rem; }
+  .hero h1 { font-size: 2.6rem; font-weight: 700; margin: 0 0 .6rem; letter-spacing: -.015em; line-height: 1.12; }
+  .hero .promise {
+    font-family: var(--serif);
+    font-style: italic;
+    font-weight: 500;
+    font-size: 1.35rem;
+    color: var(--accent);
+    margin: .4rem 0 1.1rem;
+  }
   .hero .lede { font-size: 1.08rem; color: var(--text-dim); max-width: 62ch; }
   .hero-cta-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: 1.4rem; }
   .hero-cta {
@@ -293,7 +307,7 @@
     width: 1.8rem; height: 1.8rem;
     border-radius: 50%;
     background: var(--accent);
-    color: #fff;
+    color: var(--bg);
     display: flex; align-items: center; justify-content: center;
     font-weight: 700; font-size: .85rem;
   }
