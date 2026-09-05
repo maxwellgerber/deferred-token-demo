@@ -1,6 +1,4 @@
 const IDP = "https://idp.deferred-token-response.dev";
-const CLIENT_ID = "demo-client";
-const CLIENT_SECRET = "demo-secret";
 
 const DOCUMENTS = [
   { id: "doc-1", name: "Q3 Planning Doc" },
@@ -16,19 +14,6 @@ const sessionId = (() => {
   return fresh;
 })();
 document.getElementById("session-tag").textContent = `session ${sessionId.slice(0, 8)}`;
-
-function basicAuthHeader() {
-  return "Basic " + btoa(`${CLIENT_ID}:${CLIENT_SECRET}`);
-}
-
-function requestDetailFor(params) {
-  return {
-    method: "POST",
-    path: "/token",
-    headers: { Authorization: basicAuthHeader(), "Content-Type": "application/x-www-form-urlencoded" },
-    body: Object.fromEntries(params),
-  };
-}
 
 function selectedDocument() {
   const id = document.getElementById("f-document").value;
@@ -143,7 +128,7 @@ document.getElementById("send-btn").addEventListener("click", async () => {
   document.getElementById("send-btn").disabled = true;
   document.getElementById("result-card").style.display = "none";
   DTR.beginAttempt();
-  setStatus("pending", "sending token request…");
+  DTR.setStatus("pending", "sending token request…");
   const details = buildAuthorizationDetails();
   const params = new URLSearchParams({
     grant_type: "client_credentials",
@@ -151,11 +136,11 @@ document.getElementById("send-btn").addEventListener("click", async () => {
     completion_mode: "deferred",
   });
   appendLog("client", "POST /token  grant_type=client_credentials completion_mode=deferred", undefined, {
-    request: requestDetailFor(params),
+    request: DTR.requestDetailFor(params),
   });
   const res = await fetch(`${IDP}/token?session=${encodeURIComponent(sessionId)}`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: basicAuthHeader() },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: DTR.basicAuthHeader() },
     body: params,
   });
   const data = await res.json();
@@ -164,7 +149,7 @@ document.getElementById("send-btn").addEventListener("click", async () => {
     appendLog("client", "received 200 OK — access_token issued synchronously (already granted, no deferral)", undefined, {
       response: { status: res.status, body: data },
     });
-    setStatus("ok", "resolved synchronously — no deferral needed");
+    DTR.setStatus("ok", "resolved synchronously — no deferral needed");
     document.getElementById("result-card").style.display = "block";
     document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
     document.getElementById("send-btn").disabled = false;
@@ -175,37 +160,36 @@ document.getElementById("send-btn").addEventListener("click", async () => {
   appendLog("client", `response ${res.status}: ${data.error ?? "ok"}`, undefined, { response: { status: res.status, body: data } });
 
   if (data.error === "authorization_pending" && data.deferral_code) {
-    setStatus("pending", "authorization_pending — waiting on the resource owner");
+    DTR.setStatus("pending", "authorization_pending — waiting on the resource owner");
     startPolling(data.deferral_code, data.interval);
   } else {
     DTR.endAttempt();
-    setStatus("error", data.error ?? "unexpected response");
+    DTR.setStatus("error", data.error ?? "unexpected response");
     document.getElementById("send-btn").disabled = false;
   }
 });
 
 // --- Poll ---
-let pollTimer = null;
-let pollInterval = 4;
+const pollState = { timer: null, interval: 4 };
 
 function startPolling(code, interval) {
-  pollInterval = interval ?? 4;
+  pollState.interval = interval ?? 4;
   poll(code);
 }
 
 async function poll(code) {
   const params = new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:deferred", deferral_code: code });
-  appendLog("client", `poll  deferral_code=${code.slice(0, 12)}…`, undefined, { request: requestDetailFor(params) });
+  appendLog("client", `poll  deferral_code=${code.slice(0, 12)}…`, undefined, { request: DTR.requestDetailFor(params) });
   const res = await fetch(`${IDP}/token?session=${encodeURIComponent(sessionId)}`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: basicAuthHeader() },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: DTR.basicAuthHeader() },
     body: params,
   });
   const data = await res.json();
 
   if (res.ok) {
     appendLog("client", "received 200 OK — access_token issued", undefined, { response: { status: res.status, body: data } });
-    setStatus("ok", "resolved");
+    DTR.setStatus("ok", "resolved");
     document.getElementById("result-card").style.display = "block";
     document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
     document.getElementById("send-btn").disabled = false;
@@ -216,26 +200,26 @@ async function poll(code) {
   appendLog("client", `poll response: ${data.error}`, undefined, { response: { status: res.status, body: data } });
   switch (data.error) {
     case "authorization_pending":
-      setStatus("pending", "authorization_pending — waiting on the resource owner");
+      DTR.setStatus("pending", "authorization_pending — waiting on the resource owner");
       schedulePoll(code);
       return;
     case "slow_down":
-      pollInterval += 5;
-      appendLog("client", `backing off to ${pollInterval}s per slow_down`);
+      pollState.interval += 5;
+      appendLog("client", `backing off to ${pollState.interval}s per slow_down`);
       schedulePoll(code);
       return;
     case "access_denied":
-      setStatus("error", "access_denied");
+      DTR.setStatus("error", "access_denied");
       document.getElementById("send-btn").disabled = false;
       DTR.endAttempt();
       return;
     case "expired_token":
-      setStatus("error", "expired_token");
+      DTR.setStatus("error", "expired_token");
       document.getElementById("send-btn").disabled = false;
       DTR.endAttempt();
       return;
     default:
-      setStatus("error", data.error ?? "unknown error");
+      DTR.setStatus("error", data.error ?? "unknown error");
       document.getElementById("send-btn").disabled = false;
       DTR.endAttempt();
       return;
@@ -243,19 +227,7 @@ async function poll(code) {
 }
 
 function schedulePoll(code) {
-  clearTimeout(pollTimer);
-  if (DTR.pollingPaused) {
-    DTR.armResume(() => poll(code));
-    return;
-  }
-  pollTimer = setTimeout(() => poll(code), pollInterval * 1000);
-  DTR.armResume(() => poll(code), pollTimer);
-}
-
-function setStatus(kind, text) {
-  const pill = document.getElementById("status-pill");
-  pill.className = `status-pill ${kind}`;
-  pill.textContent = text;
+  DTR.schedulePoll(pollState, () => poll(code));
 }
 
 // --- Resource owner console ---
@@ -273,11 +245,11 @@ document.getElementById("deny-btn").addEventListener("click", () => decide("deny
 
 // --- Reset ---
 document.getElementById("reset-btn").addEventListener("click", async () => {
-  clearTimeout(pollTimer);
+  clearTimeout(pollState.timer);
   DTR.endAttempt();
   await fetch(`${IDP}/admin/reset?session=${encodeURIComponent(sessionId)}`, { method: "POST" });
   document.getElementById("send-btn").disabled = false;
   document.getElementById("result-card").style.display = "none";
-  setStatus("idle", "idle");
+  DTR.setStatus("idle", "idle");
   appendLog("client", "session reset");
 });

@@ -1,6 +1,4 @@
 const IDP = "https://idp.deferred-token-response.dev";
-const CLIENT_ID = "demo-client";
-const CLIENT_SECRET = "demo-secret";
 
 const sessionId = (() => {
   const existing = localStorage.getItem("dtr-demo-session-id-jag");
@@ -10,19 +8,6 @@ const sessionId = (() => {
   return fresh;
 })();
 document.getElementById("session-tag").textContent = `session ${sessionId.slice(0, 8)}`;
-
-function basicAuthHeader() {
-  return "Basic " + btoa(`${CLIENT_ID}:${CLIENT_SECRET}`);
-}
-
-function requestDetailFor(params) {
-  return {
-    method: "POST",
-    path: "/token",
-    headers: { Authorization: basicAuthHeader(), "Content-Type": "application/x-www-form-urlencoded" },
-    body: Object.fromEntries(params),
-  };
-}
 
 // --- WebSocket to the AS's session Durable Object: AS-side logs + state push ---
 let ws;
@@ -85,18 +70,18 @@ document.getElementById("send-btn").addEventListener("click", async () => {
   document.getElementById("result-card").style.display = "none";
   document.getElementById("interaction-slot").innerHTML = "";
   DTR.beginAttempt();
-  setStatus("pending", "sending token request…");
+  DTR.setStatus("pending", "sending token request…");
   const params = new URLSearchParams({
     grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
     assertion: currentAssertion,
     completion_mode: "deferred",
   });
   appendLog("client", "POST /token  grant_type=jwt-bearer completion_mode=deferred", undefined, {
-    request: requestDetailFor(params),
+    request: DTR.requestDetailFor(params),
   });
   const res = await fetch(`${IDP}/token?session=${encodeURIComponent(sessionId)}`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: basicAuthHeader() },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: DTR.basicAuthHeader() },
     body: params,
   });
   const data = await res.json();
@@ -107,7 +92,7 @@ document.getElementById("send-btn").addEventListener("click", async () => {
       response: { status: res.status, body: data },
     });
     DTR.endAttempt();
-    setStatus("ok", "resolved synchronously — no interaction needed");
+    DTR.setStatus("ok", "resolved synchronously — no interaction needed");
     document.getElementById("result-card").style.display = "block";
     document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
     document.getElementById("send-btn").disabled = false;
@@ -115,30 +100,29 @@ document.getElementById("send-btn").addEventListener("click", async () => {
   }
 
   if (data.error === "authorization_pending" && data.deferral_code) {
-    setStatus("pending", "authorization_pending — polling…");
+    DTR.setStatus("pending", "authorization_pending — polling…");
     startPolling(data.deferral_code, data.interval);
   } else {
     DTR.endAttempt();
-    setStatus("error", data.error ?? "unexpected response");
+    DTR.setStatus("error", data.error ?? "unexpected response");
     document.getElementById("send-btn").disabled = false;
   }
 });
 
 // --- Step 3: poll ---
-let pollTimer = null;
-let pollInterval = 4;
+const pollState = { timer: null, interval: 4 };
 
 function startPolling(code, interval) {
-  pollInterval = interval ?? 4;
+  pollState.interval = interval ?? 4;
   poll(code);
 }
 
 async function poll(code) {
   const params = new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:deferred", deferral_code: code });
-  appendLog("client", `poll  deferral_code=${code.slice(0, 12)}…`, undefined, { request: requestDetailFor(params) });
+  appendLog("client", `poll  deferral_code=${code.slice(0, 12)}…`, undefined, { request: DTR.requestDetailFor(params) });
   const res = await fetch(`${IDP}/token?session=${encodeURIComponent(sessionId)}`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: basicAuthHeader() },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: DTR.basicAuthHeader() },
     body: params,
   });
   const data = await res.json();
@@ -146,7 +130,7 @@ async function poll(code) {
   if (res.ok) {
     appendLog("client", "received 200 OK — access_token issued", undefined, { response: { status: res.status, body: data } });
     DTR.endAttempt();
-    setStatus("ok", "resolved");
+    DTR.setStatus("ok", "resolved");
     document.getElementById("result-card").style.display = "block";
     document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
     document.getElementById("interaction-slot").innerHTML = "";
@@ -159,49 +143,43 @@ async function poll(code) {
 
   switch (data.error) {
     case "authorization_pending":
-      setStatus("pending", "authorization_pending — waiting on the authorization server");
+      DTR.setStatus("pending", "authorization_pending — waiting on the authorization server");
       schedulePoll(code);
       return;
     case "interaction_required":
-      setStatus("pending", "interaction_required — user action needed");
+      DTR.setStatus("pending", "interaction_required — user action needed");
       showInteractionLink(data.interaction_uri);
       schedulePoll(code);
       return;
     case "interaction_pending":
-      setStatus("pending", "interaction_pending — user is deciding");
+      DTR.setStatus("pending", "interaction_pending — user is deciding");
       schedulePoll(code);
       return;
     case "slow_down":
-      pollInterval += 5;
-      appendLog("client", `backing off to ${pollInterval}s per slow_down`);
+      pollState.interval += 5;
+      appendLog("client", `backing off to ${pollState.interval}s per slow_down`);
       schedulePoll(code);
       return;
     case "access_denied":
       DTR.endAttempt();
-      setStatus("error", "access_denied");
+      DTR.setStatus("error", "access_denied");
       document.getElementById("send-btn").disabled = false;
       return;
     case "expired_token":
       DTR.endAttempt();
-      setStatus("error", "expired_token");
+      DTR.setStatus("error", "expired_token");
       document.getElementById("send-btn").disabled = false;
       return;
     default:
       DTR.endAttempt();
-      setStatus("error", data.error ?? "unknown error");
+      DTR.setStatus("error", data.error ?? "unknown error");
       document.getElementById("send-btn").disabled = false;
       return;
   }
 }
 
 function schedulePoll(code) {
-  clearTimeout(pollTimer);
-  if (DTR.pollingPaused) {
-    DTR.armResume(() => poll(code));
-    return;
-  }
-  pollTimer = setTimeout(() => poll(code), pollInterval * 1000);
-  DTR.armResume(() => poll(code), pollTimer);
+  DTR.schedulePoll(pollState, () => poll(code));
 }
 
 let interactionPopup = null;
@@ -225,15 +203,9 @@ function closeInteractionPopup() {
   interactionPopup = null;
 }
 
-function setStatus(kind, text) {
-  const pill = document.getElementById("status-pill");
-  pill.className = `status-pill ${kind}`;
-  pill.textContent = text;
-}
-
 // --- Reset ---
 document.getElementById("reset-btn").addEventListener("click", async () => {
-  clearTimeout(pollTimer);
+  clearTimeout(pollState.timer);
   closeInteractionPopup();
   DTR.endAttempt();
   await fetch(`${IDP}/admin/reset?session=${encodeURIComponent(sessionId)}`, { method: "POST" });
@@ -242,6 +214,6 @@ document.getElementById("reset-btn").addEventListener("click", async () => {
   document.getElementById("send-btn").disabled = true;
   document.getElementById("result-card").style.display = "none";
   document.getElementById("interaction-slot").innerHTML = "";
-  setStatus("idle", "idle");
+  DTR.setStatus("idle", "idle");
   appendLog("client", "session reset");
 });

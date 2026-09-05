@@ -1,6 +1,4 @@
 const IDP = "https://idp.deferred-token-response.dev";
-const CLIENT_ID = "demo-client";
-const CLIENT_SECRET = "demo-secret";
 
 const sessionId = (() => {
   const existing = localStorage.getItem("dtr-demo-session-fraud-review");
@@ -10,19 +8,6 @@ const sessionId = (() => {
   return fresh;
 })();
 document.getElementById("session-tag").textContent = `session ${sessionId.slice(0, 8)}`;
-
-function basicAuthHeader() {
-  return "Basic " + btoa(`${CLIENT_ID}:${CLIENT_SECRET}`);
-}
-
-function requestDetailFor(params) {
-  return {
-    method: "POST",
-    path: "/token",
-    headers: { Authorization: basicAuthHeader(), "Content-Type": "application/x-www-form-urlencoded" },
-    body: Object.fromEntries(params),
-  };
-}
 
 // --- WebSocket to the AS's session Durable Object ---
 let ws;
@@ -58,9 +43,9 @@ function renderAsState(state) {
   dl.innerHTML = `
     <dt>status</dt><dd>${state.status}</dd>
     <dt>deferral_code</dt><dd>${state.deferral_code.slice(0, 16)}…</dd>
-    <dt>subject</dt><dd>${state.context.subject}</dd>
-    <dt>amount</dt><dd>${state.context.amount}</dd>
-    <dt>recipient</dt><dd>${state.context.recipient}</dd>
+    <dt>subject</dt><dd>${escapeHtml(state.context.subject)}</dd>
+    <dt>amount</dt><dd>${escapeHtml(state.context.amount)}</dd>
+    <dt>recipient</dt><dd>${escapeHtml(state.context.recipient)}</dd>
   `;
   endUserView.textContent =
     `${state.context.subject} (standing: ${state.context.senderStanding}) already granted ${state.scope || "this scope"} for a ` +
@@ -68,8 +53,8 @@ function renderAsState(state) {
     `Authorization Code flow. Nothing further is needed from them.`;
   reviewDetail.innerHTML = `
     <dt>memo</dt><dd>${escapeHtml(state.context.memo || "(none)")}</dd>
-    <dt>sender standing</dt><dd>${state.context.subject} — ${state.context.senderStanding}</dd>
-    <dt>recipient standing</dt><dd>${state.context.recipient} — ${state.context.recipientStanding}</dd>
+    <dt>sender standing</dt><dd>${escapeHtml(state.context.subject)} — ${escapeHtml(state.context.senderStanding)}</dd>
+    <dt>recipient standing</dt><dd>${escapeHtml(state.context.recipient)} — ${escapeHtml(state.context.recipientStanding)}</dd>
     <dt>recipient history</dt><dd>${escapeHtml(state.context.recipientHistory || "—")}</dd>
   `;
 }
@@ -104,7 +89,7 @@ document.getElementById("start-auth-btn").addEventListener("click", () => {
 
   const url = new URL(`${IDP}/authorize`);
   url.searchParams.set("session", sessionId);
-  url.searchParams.set("client_id", CLIENT_ID);
+  url.searchParams.set("client_id", DTR.CLIENT_ID);
   url.searchParams.set("redirect_uri", redirectUri);
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", "wire_transfers.initiate");
@@ -120,6 +105,11 @@ document.getElementById("start-auth-btn").addEventListener("click", () => {
 window.addEventListener("message", (evt) => {
   if (evt.origin !== location.origin) return;
   if (!evt.data) return;
+  const expectedState = authPopup && authPopup.__dtrState;
+  if (expectedState && evt.data.state !== expectedState) {
+    appendLog("client", "ignored postMessage: state mismatch (possible CSRF) — discarding response");
+    return;
+  }
   if (evt.data.error) {
     document.getElementById("auth-status").textContent = `Consent screen returned: ${evt.data.error}`;
     appendLog("client", `consent denied: ${evt.data.error}`);
@@ -139,18 +129,18 @@ document.getElementById("send-btn").addEventListener("click", async () => {
   document.getElementById("send-btn").disabled = true;
   document.getElementById("auth-status").textContent = "Token request sent — waiting on the result.";
   DTR.beginAttempt();
-  setStatus("pending", "sending token request…");
+  DTR.setStatus("pending", "sending token request…");
   const params = new URLSearchParams({
     grant_type: "authorization_code",
     code: currentCode,
     completion_mode: "deferred",
   });
   appendLog("client", "POST /token  grant_type=authorization_code completion_mode=deferred", undefined, {
-    request: requestDetailFor(params),
+    request: DTR.requestDetailFor(params),
   });
   const res = await fetch(`${IDP}/token?session=${encodeURIComponent(sessionId)}`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: basicAuthHeader() },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: DTR.basicAuthHeader() },
     body: params,
   });
   const data = await res.json();
@@ -160,7 +150,7 @@ document.getElementById("send-btn").addEventListener("click", async () => {
       response: { status: res.status, body: data },
     });
     DTR.endAttempt();
-    setStatus("ok", "resolved synchronously — no fraud review needed");
+    DTR.setStatus("ok", "resolved synchronously — no fraud review needed");
     document.getElementById("result-card").style.display = "block";
     document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
     document.getElementById("auth-status").textContent = "Code redeemed — click \"Start authorization\" to submit another transfer.";
@@ -171,31 +161,30 @@ document.getElementById("send-btn").addEventListener("click", async () => {
   appendLog("client", `response ${res.status}: ${data.error ?? "ok"}`, undefined, { response: { status: res.status, body: data } });
 
   if (data.error === "authorization_pending" && data.deferral_code) {
-    setStatus("pending", "authorization_pending — waiting on fraud review");
+    DTR.setStatus("pending", "authorization_pending — waiting on fraud review");
     startPolling(data.deferral_code, data.interval);
   } else {
     DTR.endAttempt();
-    setStatus("error", data.error ?? "unexpected response");
+    DTR.setStatus("error", data.error ?? "unexpected response");
     document.getElementById("auth-status").textContent = "Something went wrong — click \"Start authorization\" to try again.";
     currentCode = null;
   }
 });
 
 // --- Poll ---
-let pollTimer = null;
-let pollInterval = 4;
+const pollState = { timer: null, interval: 4 };
 
 function startPolling(code, interval) {
-  pollInterval = interval ?? 4;
+  pollState.interval = interval ?? 4;
   poll(code);
 }
 
 async function poll(code) {
   const params = new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:deferred", deferral_code: code });
-  appendLog("client", `poll  deferral_code=${code.slice(0, 12)}…`, undefined, { request: requestDetailFor(params) });
+  appendLog("client", `poll  deferral_code=${code.slice(0, 12)}…`, undefined, { request: DTR.requestDetailFor(params) });
   const res = await fetch(`${IDP}/token?session=${encodeURIComponent(sessionId)}`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: basicAuthHeader() },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: DTR.basicAuthHeader() },
     body: params,
   });
   const data = await res.json();
@@ -203,7 +192,7 @@ async function poll(code) {
   if (res.ok) {
     appendLog("client", "received 200 OK — access_token issued", undefined, { response: { status: res.status, body: data } });
     DTR.endAttempt();
-    setStatus("ok", "resolved");
+    DTR.setStatus("ok", "resolved");
     document.getElementById("result-card").style.display = "block";
     document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
     document.getElementById("auth-status").textContent = "Code redeemed — click \"Start authorization\" to submit another transfer.";
@@ -214,29 +203,29 @@ async function poll(code) {
   appendLog("client", `poll response: ${data.error}`, undefined, { response: { status: res.status, body: data } });
   switch (data.error) {
     case "authorization_pending":
-      setStatus("pending", "authorization_pending — waiting on fraud review");
+      DTR.setStatus("pending", "authorization_pending — waiting on fraud review");
       schedulePoll(code);
       return;
     case "slow_down":
-      pollInterval += 5;
-      appendLog("client", `backing off to ${pollInterval}s per slow_down`);
+      pollState.interval += 5;
+      appendLog("client", `backing off to ${pollState.interval}s per slow_down`);
       schedulePoll(code);
       return;
     case "access_denied":
       DTR.endAttempt();
-      setStatus("error", "access_denied");
+      DTR.setStatus("error", "access_denied");
       document.getElementById("auth-status").textContent = "Request denied — click \"Start authorization\" to try again.";
       currentCode = null;
       return;
     case "expired_token":
       DTR.endAttempt();
-      setStatus("error", "expired_token");
+      DTR.setStatus("error", "expired_token");
       document.getElementById("auth-status").textContent = "Deferral expired — click \"Start authorization\" to try again.";
       currentCode = null;
       return;
     default:
       DTR.endAttempt();
-      setStatus("error", data.error ?? "unknown error");
+      DTR.setStatus("error", data.error ?? "unknown error");
       document.getElementById("auth-status").textContent = "Something went wrong — click \"Start authorization\" to try again.";
       currentCode = null;
       return;
@@ -244,19 +233,7 @@ async function poll(code) {
 }
 
 function schedulePoll(code) {
-  clearTimeout(pollTimer);
-  if (DTR.pollingPaused) {
-    DTR.armResume(() => poll(code));
-    return;
-  }
-  pollTimer = setTimeout(() => poll(code), pollInterval * 1000);
-  DTR.armResume(() => poll(code), pollTimer);
-}
-
-function setStatus(kind, text) {
-  const pill = document.getElementById("status-pill");
-  pill.className = `status-pill ${kind}`;
-  pill.textContent = text;
+  DTR.schedulePoll(pollState, () => poll(code));
 }
 
 // --- Fraud review console ---
@@ -274,13 +251,13 @@ document.getElementById("deny-btn").addEventListener("click", () => decide("deny
 
 // --- Reset ---
 document.getElementById("reset-btn").addEventListener("click", async () => {
-  clearTimeout(pollTimer);
+  clearTimeout(pollState.timer);
   DTR.endAttempt();
   await fetch(`${IDP}/admin/reset?session=${encodeURIComponent(sessionId)}`, { method: "POST" });
   currentCode = null;
   document.getElementById("auth-status").textContent = "";
   document.getElementById("send-btn").disabled = true;
   document.getElementById("result-card").style.display = "none";
-  setStatus("idle", "idle");
+  DTR.setStatus("idle", "idle");
   appendLog("client", "session reset");
 });

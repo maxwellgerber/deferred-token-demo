@@ -349,11 +349,12 @@
     <p class="lede">
       Deferred Token Response (DTR) lets an OAuth authorization server respond with &ldquo;not
       yet.&rdquo; Instead of an access token, the client receives a code it can use to check back
-      for the result. Access is granted only if the request is approved and a token is issued.
+      later — access is granted only once the authorization server approves the request and issues
+      a token.
     </p>
     <p class="lede">
-      Explore both sides of that exchange: make a request, act as the reviewer, and watch the
-      client receive the result.
+      Explore both sides of that exchange: make a request, act on the other side of it, and watch
+      the client receive the result.
     </p>
     <div class="hero-cta-row">
       <a class="hero-cta" href="https://demo.deferred-token-response.dev/" target="_blank" rel="noopener">Try the demo →</a>
@@ -543,7 +544,7 @@
       <tr><td><strong>Client</strong></td><td>The application or service asking for access.</td></tr>
       <tr><td><strong>Authorization server</strong></td><td>The system that evaluates the request and issues an access token when access is granted.</td></tr>
       <tr><td><strong>Resource server</strong></td><td>The API or service that accepts the token and provides access to the protected resource.</td></tr>
-      <tr><td><strong>Resource owner</strong></td><td>The person or organization with authority over the resource. Some examples include an end user; others use an external system or back-office process.</td></tr>
+      <tr><td><strong>Resource owner</strong></td><td>The person or organization with authority over the resource — sometimes a single end user, sometimes an organization acting through an internal review process.</td></tr>
       <tr><td><strong>Access token</strong></td><td>A credential the client presents to a resource server.</td></tr>
       <tr><td><strong>Grant type</strong></td><td>The mechanism the client uses to request a token, such as an authorization code or client credentials.</td></tr>
       <tr><td><strong>Deferral code</strong></td><td>A code the client uses to retrieve the outcome of a pending token request. It is not an access token.</td></tr>
@@ -584,7 +585,8 @@ grant_type=authorization_code
 &amp;completion_mode=deferred</code></pre>
         <p>
           Opting in does not force a delay. The server can still return a token immediately. For
-          grants with an earlier request step, the client can also send an advance hint there.
+          grants with an earlier request step — the authorization request in the Authorization
+          Code flow, for example — the client can also include this same opt-in there.
         </p>
       </li>
 
@@ -719,10 +721,6 @@ Cache-Control: no-store
       does not require a particular user-interaction pattern: a request may wait for the user, a
       separate reviewer, or an internal process.
     </p>
-    <p>
-      DTR is a general purpose mechanism that can be applied to many scenarios, such as fraud and
-      abuse protection, AI agent permissions management, document sharing, and e-commerce.
-    </p>
   </section>
 
   <hr class="divider">
@@ -731,7 +729,7 @@ Cache-Control: no-store
     <h2>See the decision happen</h2>
     <p>
       Start with fraud review: approve a transfer as the user, then decide its outcome as the
-      reviewer. Watch when the client finally receives its token.
+      reviewer. Watch the client receive its token.
     </p>
     <a class="hero-cta" href="https://demo.deferred-token-response.dev/fraud-review/" target="_blank" rel="noopener">Try fraud review →</a>
   </section>

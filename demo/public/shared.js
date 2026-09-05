@@ -111,6 +111,42 @@ window.DTR = {
   activeTimer: null,
   terminal: true, // no active attempt until beginAttempt() is called
 
+  // --- Demo client config/helpers, identical across every scenario's app.js ---
+  CLIENT_ID: "demo-client",
+  CLIENT_SECRET: "demo-secret",
+
+  basicAuthHeader() {
+    return "Basic " + btoa(`${this.CLIENT_ID}:${this.CLIENT_SECRET}`);
+  },
+
+  requestDetailFor(params) {
+    return {
+      method: "POST",
+      path: "/token",
+      headers: { Authorization: this.basicAuthHeader(), "Content-Type": "application/x-www-form-urlencoded" },
+      body: Object.fromEntries(params),
+    };
+  },
+
+  setStatus(kind, text) {
+    const pill = document.getElementById("status-pill");
+    pill.className = `status-pill ${kind}`;
+    pill.textContent = text;
+  },
+
+  // Schedules the next poll. `pollState` is a small { timer, interval } object owned by the
+  // caller (so it can read/adjust pollState.interval, e.g. on slow_down) — this just owns the
+  // timer bookkeeping and pause/resume wiring, same as every scenario's schedulePoll used to.
+  schedulePoll(pollState, pollFn) {
+    clearTimeout(pollState.timer);
+    if (this.pollingPaused) {
+      this.armResume(pollFn);
+      return;
+    }
+    pollState.timer = setTimeout(pollFn, pollState.interval * 1000);
+    this.armResume(pollFn, pollState.timer);
+  },
+
   armResume(cb, timerId) {
     this.resumeCallback = cb;
     this.activeTimer = timerId ?? null;
