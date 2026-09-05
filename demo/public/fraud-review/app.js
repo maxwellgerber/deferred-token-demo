@@ -11,24 +11,17 @@ const sessionId = (() => {
 })();
 document.getElementById("session-tag").textContent = `session ${sessionId.slice(0, 8)}`;
 
-const logBody = document.getElementById("log-body");
-const logCount = document.getElementById("log-count");
-let events = 0;
-
-function appendLog(actor, message, ts = Date.now()) {
-  events += 1;
-  logCount.textContent = `${events} event${events === 1 ? "" : "s"}`;
-  const line = document.createElement("div");
-  line.className = `log-line ${actor}`;
-  const time = new Date(ts).toLocaleTimeString([], { hour12: false });
-  line.innerHTML = `<span class="ts">${time}</span><span class="actor">${actor}</span><span class="msg"></span>`;
-  line.querySelector(".msg").textContent = message;
-  logBody.appendChild(line);
-  logBody.scrollTop = logBody.scrollHeight;
-}
-
 function basicAuthHeader() {
   return "Basic " + btoa(`${CLIENT_ID}:${CLIENT_SECRET}`);
+}
+
+function requestDetailFor(params) {
+  return {
+    method: "POST",
+    path: "/token",
+    headers: { Authorization: basicAuthHeader(), "Content-Type": "application/x-www-form-urlencoded" },
+    body: Object.fromEntries(params),
+  };
 }
 
 // --- WebSocket to the AS's session Durable Object ---
@@ -38,7 +31,7 @@ function connectSocket() {
   ws = new WebSocket(`${IDP.replace("https://", "wss://")}/events?session=${encodeURIComponent(sessionId)}`);
   ws.addEventListener("message", (evt) => {
     const msg = JSON.parse(evt.data);
-    if (msg.type === "log") appendLog("as", msg.message, msg.ts);
+    if (msg.type === "log") appendLog("as", msg.message, msg.ts, msg.detail);
     if (msg.type === "state") renderAsState(msg.state);
   });
   ws.addEventListener("close", () => setTimeout(connectSocket, 2000));
@@ -48,6 +41,7 @@ connectSocket();
 function renderAsState(state) {
   const dl = document.getElementById("as-state");
   const endUserView = document.getElementById("end-user-view");
+  const reviewDetail = document.getElementById("review-detail");
   currentStatus = state ? state.status : null;
   const approveBtn = document.getElementById("approve-btn");
   const denyBtn = document.getElementById("deny-btn");
@@ -58,6 +52,7 @@ function renderAsState(state) {
   if (!state) {
     dl.innerHTML = "<dt>status</dt><dd>no active request</dd>";
     endUserView.textContent = "No consent recorded yet.";
+    reviewDetail.innerHTML = "";
     return;
   }
   dl.innerHTML = `
@@ -68,33 +63,58 @@ function renderAsState(state) {
     <dt>recipient</dt><dd>${state.context.recipient}</dd>
   `;
   endUserView.textContent =
-    `${state.context.subject} already granted ${state.scope || "this scope"} for a ` +
+    `${state.context.subject} (standing: ${state.context.senderStanding}) already granted ${state.scope || "this scope"} for a ` +
     `${state.context.amount} transfer to ${state.context.recipient} via the regular ` +
     `Authorization Code flow. Nothing further is needed from them.`;
+  reviewDetail.innerHTML = `
+    <dt>memo</dt><dd>${escapeHtml(state.context.memo || "(none)")}</dd>
+    <dt>sender standing</dt><dd>${state.context.subject} — ${state.context.senderStanding}</dd>
+    <dt>recipient standing</dt><dd>${state.context.recipient} — ${state.context.recipientStanding}</dd>
+    <dt>recipient history</dt><dd>${escapeHtml(state.context.recipientHistory || "—")}</dd>
+  `;
 }
 
-// --- Step 1: simulate the already-completed auth code flow ---
+// --- Step 1: real Authorization Code consent screen, opened as a popup ---
 let currentCode = null;
-document.getElementById("seed-btn").addEventListener("click", async () => {
-  const body = {
-    subject: document.getElementById("f-subject").value,
-    amount: document.getElementById("f-amount").value,
-    recipient: document.getElementById("f-recipient").value,
-    scope: "wire_transfers.initiate",
-  };
-  appendLog("client", `simulating completed Authorization Code consent for ${body.subject}`);
-  const res = await fetch(`${IDP}/admin/seed-auth-code?session=${encodeURIComponent(sessionId)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  currentCode = data.code;
-  const view = document.getElementById("code-view");
-  view.style.display = "block";
-  view.textContent = `code=${data.code}`;
-  document.getElementById("send-btn").disabled = false;
-  appendLog("client", "consent recorded upstream — ready to send the token request");
+let authPopup = null;
+document.getElementById("start-auth-btn").addEventListener("click", () => {
+  const amount = document.getElementById("f-amount").value;
+  const recipient = document.getElementById("f-recipient").value;
+  const memo = document.getElementById("f-memo").value;
+  const state = crypto.randomUUID();
+  const redirectUri = `${location.origin}/fraud-review/callback.html`;
+
+  const url = new URL(`${IDP}/authorize`);
+  url.searchParams.set("session", sessionId);
+  url.searchParams.set("client_id", CLIENT_ID);
+  url.searchParams.set("redirect_uri", redirectUri);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope", "wire_transfers.initiate");
+  url.searchParams.set("amount", amount);
+  url.searchParams.set("recipient", recipient);
+  url.searchParams.set("memo", memo);
+  url.searchParams.set("state", state);
+
+  authPopup = window.open(url.toString(), "dtr-authorize", "width=460,height=560,menubar=no,toolbar=no,location=no,status=no");
+  authPopup.__dtrState = state;
+  document.getElementById("auth-status").textContent = "Waiting on alice@example.com in the popup…";
+  appendLog("client", `opened /authorize consent screen for alice@example.com ($${amount} to ${recipient})`);
+});
+
+window.addEventListener("message", (evt) => {
+  if (evt.origin !== location.origin) return;
+  if (!evt.data) return;
+  if (evt.data.error) {
+    document.getElementById("auth-status").textContent = `Consent screen returned: ${evt.data.error}`;
+    appendLog("client", `consent denied: ${evt.data.error}`);
+    return;
+  }
+  if (evt.data.code) {
+    currentCode = evt.data.code;
+    document.getElementById("auth-status").textContent = "Authorization code received — ready to send the token request.";
+    document.getElementById("send-btn").disabled = false;
+    appendLog("client", "received authorization code from the consent screen");
+  }
 });
 
 // --- Step 2: send the token request ---
@@ -107,14 +127,28 @@ document.getElementById("send-btn").addEventListener("click", async () => {
     code: currentCode,
     completion_mode: "deferred",
   });
-  appendLog("client", "POST /token  grant_type=authorization_code completion_mode=deferred");
+  appendLog("client", "POST /token  grant_type=authorization_code completion_mode=deferred", undefined, {
+    request: requestDetailFor(params),
+  });
   const res = await fetch(`${IDP}/token?session=${encodeURIComponent(sessionId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: basicAuthHeader() },
     body: params,
   });
   const data = await res.json();
-  appendLog("client", `response ${res.status}: ${data.error ?? "ok"}`);
+
+  if (res.ok) {
+    appendLog("client", "received 200 OK — access_token issued synchronously (at or under the review threshold)", undefined, {
+      response: { status: res.status, body: data },
+    });
+    setStatus("ok", "resolved synchronously — no fraud review needed");
+    document.getElementById("result-card").style.display = "block";
+    document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
+    document.getElementById("send-btn").disabled = false;
+    return;
+  }
+
+  appendLog("client", `response ${res.status}: ${data.error ?? "ok"}`, undefined, { response: { status: res.status, body: data } });
 
   if (data.error === "authorization_pending" && data.deferral_code) {
     setStatus("pending", "authorization_pending — waiting on fraud review");
@@ -136,7 +170,7 @@ function startPolling(code, interval) {
 
 async function poll(code) {
   const params = new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:deferred", deferral_code: code });
-  appendLog("client", `poll  deferral_code=${code.slice(0, 12)}…`);
+  appendLog("client", `poll  deferral_code=${code.slice(0, 12)}…`, undefined, { request: requestDetailFor(params) });
   const res = await fetch(`${IDP}/token?session=${encodeURIComponent(sessionId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: basicAuthHeader() },
@@ -145,14 +179,14 @@ async function poll(code) {
   const data = await res.json();
 
   if (res.ok) {
-    appendLog("client", "received 200 OK — access_token issued");
+    appendLog("client", "received 200 OK — access_token issued", undefined, { response: { status: res.status, body: data } });
     setStatus("ok", "resolved");
     document.getElementById("result-card").style.display = "block";
     document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
     return;
   }
 
-  appendLog("client", `poll response: ${data.error}`);
+  appendLog("client", `poll response: ${data.error}`, undefined, { response: { status: res.status, body: data } });
   switch (data.error) {
     case "authorization_pending":
       setStatus("pending", "authorization_pending — waiting on fraud review");
@@ -180,6 +214,8 @@ async function poll(code) {
 
 function schedulePoll(code) {
   clearTimeout(pollTimer);
+  DTR.armResume(() => poll(code));
+  if (DTR.pollingPaused) return;
   pollTimer = setTimeout(() => poll(code), pollInterval * 1000);
 }
 
@@ -207,20 +243,9 @@ document.getElementById("reset-btn").addEventListener("click", async () => {
   clearTimeout(pollTimer);
   await fetch(`${IDP}/admin/reset?session=${encodeURIComponent(sessionId)}`, { method: "POST" });
   currentCode = null;
-  document.getElementById("code-view").style.display = "none";
+  document.getElementById("auth-status").textContent = "";
   document.getElementById("send-btn").disabled = true;
   document.getElementById("result-card").style.display = "none";
   setStatus("idle", "idle");
   appendLog("client", "session reset");
-});
-
-// --- Hamburger menu ---
-const menuBtn = document.getElementById("menu-btn");
-const menuDropdown = document.getElementById("menu-dropdown");
-menuBtn.addEventListener("click", (e) => {
-  e.stopPropagation();
-  menuDropdown.hidden = !menuDropdown.hidden;
-});
-document.addEventListener("click", (e) => {
-  if (!menuDropdown.hidden && !menuDropdown.contains(e.target) && e.target !== menuBtn) menuDropdown.hidden = true;
 });

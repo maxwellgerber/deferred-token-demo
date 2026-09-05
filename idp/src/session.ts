@@ -11,6 +11,16 @@ export const DEMO_CLIENT_ID = "demo-client";
 export const DEMO_CLIENT_SECRET = "demo-secret";
 const DEFERRAL_EXPIRES_IN = 600; // seconds
 const POLL_INTERVAL = 4; // seconds — short, so the demo doesn't feel like watching paint dry
+const FRAUD_REVIEW_THRESHOLD = 1000; // USD — transfers over this always go to fraud review
+
+const ACCOUNT_STANDING: Record<string, string> = {
+  "alice@example.com": "good",
+  "acct:bob-9182": "risky",
+};
+
+const DEFAULT_RECIPIENT_HISTORY: Record<string, { total: number; count: number }> = {
+  "acct:bob-9182": { total: 34200, count: 7 },
+};
 
 type DeferralStatus =
   | "authorization_pending"
@@ -52,13 +62,18 @@ interface PendingAuthCode {
   subject: string;
   amount: string;
   recipient: string;
+  memo: string;
   scope: string;
   redeemed: boolean;
 }
 
+type RecipientHistory = Record<string, { total: number; count: number }>;
+
 export class DemoSession extends DurableObject<Env> {
   private deferral: DeferralRecord | null = null;
   private pendingAuthCode: PendingAuthCode | null = null;
+  private grantedDocuments: string[] = [];
+  private recipientHistory: RecipientHistory = {};
   private loaded = false;
   private sockets: Set<WebSocket> = new Set();
 
@@ -66,6 +81,9 @@ export class DemoSession extends DurableObject<Env> {
     if (this.loaded) return;
     this.deferral = ((await this.ctx.storage.get("deferral")) as DeferralRecord | undefined) ?? null;
     this.pendingAuthCode = ((await this.ctx.storage.get("pendingAuthCode")) as PendingAuthCode | undefined) ?? null;
+    this.grantedDocuments = ((await this.ctx.storage.get("grantedDocuments")) as string[] | undefined) ?? [];
+    this.recipientHistory =
+      ((await this.ctx.storage.get("recipientHistory")) as RecipientHistory | undefined) ?? { ...DEFAULT_RECIPIENT_HISTORY };
     this.loaded = true;
   }
 
@@ -77,8 +95,30 @@ export class DemoSession extends DurableObject<Env> {
     await this.ctx.storage.put("pendingAuthCode", this.pendingAuthCode);
   }
 
-  private log(message: string) {
-    const payload = JSON.stringify({ type: "log", ts: Date.now(), actor: "as", message });
+  private async persistGrantedDocuments() {
+    await this.ctx.storage.put("grantedDocuments", this.grantedDocuments);
+  }
+
+  private async persistRecipientHistory() {
+    await this.ctx.storage.put("recipientHistory", this.recipientHistory);
+  }
+
+  private formatHistory(recipient: string): string {
+    const entry = this.recipientHistory[recipient];
+    if (!entry || entry.count === 0) return "no prior transfers in the last 30 days";
+    return `$${entry.total.toLocaleString()} across ${entry.count} transfer${entry.count === 1 ? "" : "s"} in the last 30 days`;
+  }
+
+  private async bumpRecipientHistory(recipient: string, amount: number) {
+    const entry = this.recipientHistory[recipient] ?? { total: 0, count: 0 };
+    entry.total += amount;
+    entry.count += 1;
+    this.recipientHistory[recipient] = entry;
+    await this.persistRecipientHistory();
+  }
+
+  private log(message: string, detail?: { request?: unknown; response?: unknown }) {
+    const payload = JSON.stringify({ type: "log", ts: Date.now(), actor: "as", message, detail });
     for (const socket of this.sockets) {
       try {
         socket.send(payload);
@@ -89,7 +129,7 @@ export class DemoSession extends DurableObject<Env> {
   }
 
   private broadcastState() {
-    const payload = JSON.stringify({ type: "state", state: this.deferral });
+    const payload = JSON.stringify({ type: "state", state: this.deferral, grantedDocuments: this.grantedDocuments });
     for (const socket of this.sockets) {
       try {
         socket.send(payload);
@@ -110,15 +150,25 @@ export class DemoSession extends DurableObject<Env> {
     if (url.pathname === "/token" && request.method === "POST") return this.handleToken(request, sessionId);
     if (url.pathname === "/interact" && request.method === "GET") return this.handleInteractionPage(url, sessionId);
     if (url.pathname === "/interact" && request.method === "POST") return this.handleInteractionDecision(request);
+    if (url.pathname === "/authorize" && request.method === "GET") return this.handleAuthorizePage(url, sessionId);
+    if (url.pathname === "/authorize" && request.method === "POST") return this.handleAuthorizeDecision(request);
     if (url.pathname === "/admin/mint-assertion" && request.method === "POST") return this.handleMintAssertion(request);
-    if (url.pathname === "/admin/seed-auth-code" && request.method === "POST") return this.handleSeedAuthCode(request);
     if (url.pathname === "/admin/decide" && request.method === "POST") return this.handleAdminDecide(request);
-    if (url.pathname === "/admin/state" && request.method === "GET") return jsonResponse(200, { state: this.deferral });
+    if (url.pathname === "/admin/state" && request.method === "GET")
+      return jsonResponse(200, {
+        state: this.deferral,
+        grantedDocuments: this.grantedDocuments,
+        recipientHistory: this.recipientHistory,
+      });
     if (url.pathname === "/admin/reset" && request.method === "POST") {
       this.deferral = null;
       this.pendingAuthCode = null;
+      this.grantedDocuments = [];
+      this.recipientHistory = { ...DEFAULT_RECIPIENT_HISTORY };
       await this.persist();
       await this.persistAuthCode();
+      await this.persistGrantedDocuments();
+      await this.persistRecipientHistory();
       this.log("session reset");
       this.broadcastState();
       return jsonResponse(200, { ok: true });
@@ -134,7 +184,7 @@ export class DemoSession extends DurableObject<Env> {
     this.sockets.add(server);
     server.addEventListener("close", () => this.sockets.delete(server));
     server.addEventListener("error", () => this.sockets.delete(server));
-    server.send(JSON.stringify({ type: "state", state: this.deferral }));
+    server.send(JSON.stringify({ type: "state", state: this.deferral, grantedDocuments: this.grantedDocuments }));
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -181,25 +231,56 @@ export class DemoSession extends DurableObject<Env> {
     return jsonResponse(200, { assertion, claims });
   }
 
-  private async handleSeedAuthCode(request: Request): Promise<Response> {
-    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
-    const subject = (body.subject as string) || "alice@example.com";
-    const amount = (body.amount as string) || "5000.00";
-    const recipient = (body.recipient as string) || "acct:9F2C-created-by-alice";
-    const scope = (body.scope as string) || "wire_transfers.initiate";
+  // --- Real Authorization Code flow for the fraud-review scenario: a consent screen for
+  // alice@example.com, reached via an actual redirect (opened as a popup by the client). ---
+
+  private handleAuthorizePage(url: URL, sessionId: string): Response {
+    const params = url.searchParams;
+    const redirectUri = params.get("redirect_uri") ?? "";
+    const amount = params.get("amount") ?? "0.00";
+    const recipient = params.get("recipient") ?? "";
+    const memo = params.get("memo") ?? "";
+    const scope = params.get("scope") ?? "wire_transfers.initiate";
+    const state = params.get("state") ?? "";
+    this.log(`GET /authorize — rendering consent screen for alice@example.com ($${amount} to ${recipient})`);
+    return new Response(
+      renderAuthorizePage({ sessionId, redirectUri, amount, recipient, memo, scope, state }),
+      { headers: { "Content-Type": "text/html" } },
+    );
+  }
+
+  private async handleAuthorizeDecision(request: Request): Promise<Response> {
+    const form = await request.formData();
+    const redirectUri = String(form.get("redirect_uri") ?? "");
+    const amount = String(form.get("amount") ?? "0.00");
+    const recipient = String(form.get("recipient") ?? "");
+    const memo = String(form.get("memo") ?? "");
+    const scope = String(form.get("scope") ?? "wire_transfers.initiate");
+    const state = String(form.get("state") ?? "");
+    const decision = form.get("decision");
+
+    const redirectUrl = new URL(redirectUri);
+    if (state) redirectUrl.searchParams.set("state", state);
+
+    if (decision !== "approve") {
+      this.log("alice@example.com denied the Authorization Code consent screen");
+      redirectUrl.searchParams.set("error", "access_denied");
+      return Response.redirect(redirectUrl.toString(), 302);
+    }
+
     this.pendingAuthCode = {
       code: `demo_code_${generateOpaqueId(96)}`,
-      subject,
+      subject: "alice@example.com",
       amount,
       recipient,
+      memo,
       scope,
       redeemed: false,
     };
     await this.persistAuthCode();
-    this.log(
-      `${subject} completed the regular Authorization Code flow and granted ${scope} for a $${amount} transfer to ${recipient} (not shown here — this stands in for that redirect flow)`,
-    );
-    return jsonResponse(200, { code: this.pendingAuthCode.code, subject, amount, recipient, scope });
+    this.log(`alice@example.com approved the consent screen — granted ${scope} for a $${amount} transfer to ${recipient}`);
+    redirectUrl.searchParams.set("code", this.pendingAuthCode.code);
+    return Response.redirect(redirectUrl.toString(), 302);
   }
 
   private async handleToken(request: Request, sessionId: string): Promise<Response> {
@@ -213,20 +294,39 @@ export class DemoSession extends DurableObject<Env> {
     if (!form) return jsonResponse(400, { error: "invalid_request", error_description: "expected application/x-www-form-urlencoded" });
     const grantType = form.get("grant_type");
 
+    const requestDetail = {
+      method: "POST",
+      path: "/token",
+      headers: {
+        Authorization: request.headers.get("Authorization") ?? "",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: Object.fromEntries(form.entries()),
+    };
+
+    let response: Response;
     if (grantType === "urn:ietf:params:oauth:grant-type:jwt-bearer") {
-      return this.handleIdJagRequest(form, clientId);
+      response = await this.handleIdJagRequest(form, clientId);
+    } else if (grantType === "client_credentials") {
+      response = await this.handleClientCredentialsRequest(form, clientId);
+    } else if (grantType === "authorization_code") {
+      response = await this.handleAuthorizationCodeRequest(form, clientId);
+    } else if (grantType === "urn:ietf:params:oauth:grant-type:deferred") {
+      response = await this.handlePoll(form, clientId, sessionId);
+    } else {
+      this.log(`token request rejected: unsupported grant_type ${String(grantType)}`);
+      response = jsonResponse(400, { error: "unsupported_grant_type" });
     }
-    if (grantType === "client_credentials") {
-      return this.handleClientCredentialsRequest(form, clientId);
-    }
-    if (grantType === "authorization_code") {
-      return this.handleAuthorizationCodeRequest(form, clientId);
-    }
-    if (grantType === "urn:ietf:params:oauth:grant-type:deferred") {
-      return this.handlePoll(form, clientId, sessionId);
-    }
-    this.log(`token request rejected: unsupported grant_type ${String(grantType)}`);
-    return jsonResponse(400, { error: "unsupported_grant_type" });
+
+    const responseBody = await response
+      .clone()
+      .json()
+      .catch(() => null);
+    this.log(`⇄ POST /token → ${response.status}`, {
+      request: requestDetail,
+      response: { status: response.status, body: responseBody },
+    });
+    return response;
   }
 
   // --- Scenario 1: ID-JAG, resource always requires interaction. ---
@@ -291,11 +391,6 @@ export class DemoSession extends DurableObject<Env> {
     const rawDetails = form.get("authorization_details");
     this.log(`token request received: grant_type=client_credentials completion_mode=${completionMode.join(",") || "(none)"}`);
 
-    if (!completionMode.includes("deferred")) {
-      this.log("client did not opt in to completion_mode=deferred — this demo requires it, since owner confirmation is always needed");
-      return jsonResponse(400, { error: "invalid_request", error_description: "this resource requires completion_mode=deferred" });
-    }
-
     let details: unknown[];
     try {
       details = JSON.parse(String(rawDetails ?? "[]"));
@@ -303,14 +398,34 @@ export class DemoSession extends DurableObject<Env> {
     } catch {
       return jsonResponse(400, { error: "invalid_request", error_description: "authorization_details must be a JSON array (RFC 9396)" });
     }
-
     this.log(`authorization_details received: ${JSON.stringify(details)}`);
+
+    const first = (details[0] ?? {}) as Record<string, unknown>;
+    const documentId = String(first.document_id ?? "");
+
+    if (documentId && this.grantedDocuments.includes(documentId)) {
+      this.log(`policy: ${documentId} was already granted to this client — issuing a token immediately, no deferral needed`);
+      return tokenSuccessResponse({
+        access_token: `demo_at_${generateOpaqueId(96)}`,
+        token_type: "Bearer",
+        expires_in: 3600,
+        authorization_details: details,
+      });
+    }
+
+    if (!completionMode.includes("deferred")) {
+      this.log("client did not opt in to completion_mode=deferred — this demo requires it for a document that hasn't been granted yet");
+      return jsonResponse(400, { error: "invalid_request", error_description: "this resource requires completion_mode=deferred" });
+    }
+
     this.log(
-      "policy: this resource requires the resource owner to confirm — client_credentials carries no user context, " +
-        "so there is no one for the client to route an interaction_uri to. Resolution happens on the AS's own console.",
+      `policy: ${documentId || "this document"} has not been granted before — the resource owner must confirm. client_credentials carries ` +
+        "no user context, so there is no one for the client to route an interaction_uri to. Resolution happens on the AS's own console.",
     );
 
     this.startDeferral(clientId, "rar-client-credentials", "", {
+      document_id: documentId,
+      document_name: String(first.document_name ?? ""),
       authorization_details: JSON.stringify(details, null, 2),
     });
     this.deferral!.authorizationDetails = details;
@@ -325,35 +440,57 @@ export class DemoSession extends DurableObject<Env> {
     });
   }
 
-  // --- Scenario 3: fraud review. A real end user already granted consent via the ordinary
-  // Authorization Code flow (pre-seeded here — that redirect dance is upstream of DTR).
-  // A fraud reviewer, not the end user, must additionally approve before the token issues. ---
+  // --- Scenario 3: fraud review. A real end user grants consent via an actual Authorization
+  // Code redirect (the /authorize consent screen above). Transfers over the threshold then
+  // additionally need a fraud reviewer — not the end user — to sign off before the token issues.
+  // Transfers at or under the threshold are the AS's call to complete synchronously. ---
 
   private async handleAuthorizationCodeRequest(form: FormData, clientId: string): Promise<Response> {
     const completionMode = String(form.get("completion_mode") ?? "").split(" ").filter(Boolean);
     const code = form.get("code");
     this.log(`token request received: grant_type=authorization_code completion_mode=${completionMode.join(",") || "(none)"}`);
 
-    if (!completionMode.includes("deferred")) {
-      this.log("client did not opt in to completion_mode=deferred — this demo requires it, since every transfer goes to fraud review");
-      return jsonResponse(400, { error: "invalid_request", error_description: "this resource requires completion_mode=deferred" });
-    }
     if (!this.pendingAuthCode || this.pendingAuthCode.code !== code || this.pendingAuthCode.redeemed) {
       this.log("authorization_code rejected: unrecognized or already-redeemed code");
       return jsonResponse(400, { error: "invalid_grant" });
     }
 
-    const { subject, amount, recipient, scope } = this.pendingAuthCode;
+    const { subject, amount, recipient, memo, scope } = this.pendingAuthCode;
+    const amountNum = Number.parseFloat(amount) || 0;
     this.pendingAuthCode.redeemed = true;
     await this.persistAuthCode();
 
-    this.log(`authorization_code validated: end user ${subject} already granted ${scope} for this transfer via the regular auth code flow`);
-    this.log(`policy: transfers of this size are always routed to fraud review before the token is issued — deferring`);
+    this.log(`authorization_code validated: end user ${subject} granted ${scope} for a $${amount} transfer to ${recipient}`);
+
+    if (amountNum <= FRAUD_REVIEW_THRESHOLD) {
+      this.log(`policy: $${amount} is at or under the $${FRAUD_REVIEW_THRESHOLD.toLocaleString()} fraud-review threshold — issuing the token immediately`);
+      await this.bumpRecipientHistory(recipient, amountNum);
+      return tokenSuccessResponse({
+        access_token: `demo_at_${generateOpaqueId(96)}`,
+        token_type: "Bearer",
+        expires_in: 3600,
+        scope,
+      });
+    }
+
+    if (!completionMode.includes("deferred")) {
+      this.log(`client did not opt in to completion_mode=deferred — this demo requires it for transfers over $${FRAUD_REVIEW_THRESHOLD.toLocaleString()}`);
+      return jsonResponse(400, {
+        error: "invalid_request",
+        error_description: `this resource requires completion_mode=deferred for transfers over $${FRAUD_REVIEW_THRESHOLD.toLocaleString()}`,
+      });
+    }
+
+    this.log(`policy: $${amount} exceeds the $${FRAUD_REVIEW_THRESHOLD.toLocaleString()} threshold — routing to fraud review before the token is issued`);
 
     this.startDeferral(clientId, "fraud-review", scope, {
       subject,
       amount: `$${amount}`,
       recipient,
+      memo: memo || "(no memo)",
+      senderStanding: ACCOUNT_STANDING[subject] ?? "unknown",
+      recipientStanding: ACCOUNT_STANDING[recipient] ?? "unknown",
+      recipientHistory: this.formatHistory(recipient),
     });
     await this.persist();
     this.broadcastState();
@@ -444,6 +581,18 @@ export class DemoSession extends DurableObject<Env> {
 
     if (this.deferral.status === "resolved") {
       this.deferral.status = "redeemed";
+      if (this.deferral.scenario === "rar-client-credentials" && this.deferral.context.document_id) {
+        const docId = this.deferral.context.document_id;
+        if (!this.grantedDocuments.includes(docId)) {
+          this.grantedDocuments.push(docId);
+          await this.persistGrantedDocuments();
+          this.log(`${docId} added to this client's granted documents — future requests for it will resolve synchronously`);
+        }
+      }
+      if (this.deferral.scenario === "fraud-review" && this.deferral.context.recipient) {
+        const amountNum = Number.parseFloat(this.deferral.context.amount?.replace(/[$,]/g, "") ?? "0") || 0;
+        await this.bumpRecipientHistory(this.deferral.context.recipient, amountNum);
+      }
       await this.persist();
       this.broadcastState();
       this.log("poll response: 200 OK — access_token issued, deferral_code redeemed");
@@ -586,6 +735,50 @@ function renderInteractPage(opts: {
       </dl>
       <form method="POST" action="/interact?session=${encodeURIComponent(opts.sessionId ?? "")}">
         <input type="hidden" name="code" value="${opts.code}">
+        <button class="approve" name="decision" value="approve">Approve</button>
+        <button class="deny" name="decision" value="deny">Deny</button>
+      </form>
+    </div>
+  </body></html>`;
+}
+
+function renderAuthorizePage(opts: {
+  sessionId: string;
+  redirectUri: string;
+  amount: string;
+  recipient: string;
+  memo: string;
+  scope: string;
+  state: string;
+}): string {
+  const style = `
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #101114; color: #eceef2; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+    .card { max-width: 420px; background: #17181d; border: 1px solid #2a2c34; border-radius: 12px; padding: 2rem; }
+    h1 { font-size: 1.05rem; margin-top: 0; color: #9a9fac; font-weight: 600; }
+    dl { display: grid; grid-template-columns: auto 1fr; gap: .3rem 1rem; font-size: .9rem; color: #9a9fac; margin: 1.2rem 0; }
+    dt { font-weight: 600; color: #eceef2; }
+    dd { margin: 0; word-break: break-all; }
+    button { font-size: .95rem; font-weight: 600; padding: .6rem 1.2rem; border-radius: 8px; border: none; cursor: pointer; margin-right: .6rem; }
+    .approve { background: #4fd188; color: #05170c; }
+    .deny { background: #ff6b64; color: #200604; }
+  `;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Sign in to approve</title><style>${style}</style></head><body>
+    <div class="card">
+      <h1>idp.deferred-token-response.dev</h1>
+      <p><strong>demo-client</strong> is requesting your approval, <strong>alice@example.com</strong>.</p>
+      <dl>
+        <dt>Amount</dt><dd>$${opts.amount}</dd>
+        <dt>Recipient</dt><dd>${opts.recipient}</dd>
+        <dt>Memo</dt><dd>${opts.memo || "(none)"}</dd>
+        <dt>Scope</dt><dd>${opts.scope}</dd>
+      </dl>
+      <form method="POST" action="/authorize?session=${encodeURIComponent(opts.sessionId)}">
+        <input type="hidden" name="redirect_uri" value="${opts.redirectUri}">
+        <input type="hidden" name="amount" value="${opts.amount}">
+        <input type="hidden" name="recipient" value="${opts.recipient}">
+        <input type="hidden" name="memo" value="${opts.memo}">
+        <input type="hidden" name="scope" value="${opts.scope}">
+        <input type="hidden" name="state" value="${opts.state}">
         <button class="approve" name="decision" value="approve">Approve</button>
         <button class="deny" name="decision" value="deny">Deny</button>
       </form>

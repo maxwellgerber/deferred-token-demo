@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Returning…</title>
+</head>
+<body>
+<script>
+  const params = new URLSearchParams(location.search);
+  if (window.opener) {
+    window.opener.postMessage(
+      { code: params.get("code"), state: params.get("state"), error: params.get("error") },
+      location.origin,
+    );
+  }
+  window.close();
+</script>
+</body>
+</html>

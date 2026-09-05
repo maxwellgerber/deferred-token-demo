@@ -2,6 +2,12 @@ const IDP = "https://idp.deferred-token-response.dev";
 const CLIENT_ID = "demo-client";
 const CLIENT_SECRET = "demo-secret";
 
+const DOCUMENTS = [
+  { id: "doc-1", name: "Q3 Planning Doc" },
+  { id: "doc-2", name: "Engineering Roadmap" },
+  { id: "doc-3", name: "Budget Spreadsheet" },
+];
+
 const sessionId = (() => {
   const existing = localStorage.getItem("dtr-demo-session-rar");
   if (existing) return existing;
@@ -11,42 +17,48 @@ const sessionId = (() => {
 })();
 document.getElementById("session-tag").textContent = `session ${sessionId.slice(0, 8)}`;
 
-const logBody = document.getElementById("log-body");
-const logCount = document.getElementById("log-count");
-let events = 0;
-
-function appendLog(actor, message, ts = Date.now()) {
-  events += 1;
-  logCount.textContent = `${events} event${events === 1 ? "" : "s"}`;
-  const line = document.createElement("div");
-  line.className = `log-line ${actor}`;
-  const time = new Date(ts).toLocaleTimeString([], { hour12: false });
-  line.innerHTML = `<span class="ts">${time}</span><span class="actor">${actor}</span><span class="msg"></span>`;
-  line.querySelector(".msg").textContent = message;
-  logBody.appendChild(line);
-  logBody.scrollTop = logBody.scrollHeight;
-}
-
 function basicAuthHeader() {
   return "Basic " + btoa(`${CLIENT_ID}:${CLIENT_SECRET}`);
 }
 
+function requestDetailFor(params) {
+  return {
+    method: "POST",
+    path: "/token",
+    headers: { Authorization: basicAuthHeader(), "Content-Type": "application/x-www-form-urlencoded" },
+    body: Object.fromEntries(params),
+  };
+}
+
+function selectedDocument() {
+  const id = document.getElementById("f-document").value;
+  return DOCUMENTS.find((d) => d.id === id);
+}
+
+function docLabel(id) {
+  const doc = DOCUMENTS.find((d) => d.id === id);
+  return doc ? `${doc.id} (${doc.name})` : id;
+}
+
 function buildAuthorizationDetails() {
+  const doc = selectedDocument();
   return [
     {
-      type: "payment_initiation",
-      actions: ["initiate"],
-      instructedAmount: { currency: "USD", amount: document.getElementById("f-amount").value },
-      creditorAccount: { iban: document.getElementById("f-iban").value },
+      type: "document_access",
+      actions: ["view"],
+      document_id: doc.id,
+      document_name: doc.name,
     },
   ];
 }
 
+let grantedDocuments = [];
+
 function renderDetailsPreview() {
   document.getElementById("details-view").textContent = JSON.stringify(buildAuthorizationDetails(), null, 2);
+  renderGrantedNote();
 }
-document.getElementById("f-amount").addEventListener("input", renderDetailsPreview);
-document.getElementById("f-iban").addEventListener("input", renderDetailsPreview);
+document.getElementById("f-document").addEventListener("change", renderDetailsPreview);
 renderDetailsPreview();
 
 // --- WebSocket to the AS's session Durable Object ---
@@ -56,8 +68,13 @@ function connectSocket() {
   ws = new WebSocket(`${IDP.replace("https://", "wss://")}/events?session=${encodeURIComponent(sessionId)}`);
   ws.addEventListener("message", (evt) => {
     const msg = JSON.parse(evt.data);
-    if (msg.type === "log") appendLog("as", msg.message, msg.ts);
-    if (msg.type === "state") renderAsState(msg.state);
+    if (msg.type === "log") appendLog("as", msg.message, msg.ts, msg.detail);
+    if (msg.type === "state") {
+      renderAsState(msg.state);
+      grantedDocuments = msg.grantedDocuments || [];
+      renderGrantedList();
+      renderGrantedNote();
+    }
   });
   ws.addEventListener("close", () => setTimeout(connectSocket, 2000));
 }
@@ -78,8 +95,28 @@ function renderAsState(state) {
   dl.innerHTML = `
     <dt>status</dt><dd>${state.status}</dd>
     <dt>deferral_code</dt><dd>${state.deferral_code.slice(0, 16)}…</dd>
-    <dt>authorization_details</dt><dd><pre style="margin:.2rem 0 0;">${(state.context.authorization_details || "").replace(/</g, "&lt;")}</pre></dd>
+    <dt>document</dt><dd>${docLabel(state.context.document_id)}</dd>
   `;
+}
+
+function renderGrantedList() {
+  const el = document.getElementById("granted-list");
+  if (!grantedDocuments.length) {
+    el.textContent = "None yet — every document starts ungranted.";
+    return;
+  }
+  el.innerHTML = grantedDocuments.map((id) => `<li>${escapeHtml(docLabel(id))}</li>`).join("");
+}
+
+function renderGrantedNote() {
+  const note = document.getElementById("granted-note");
+  const doc = selectedDocument();
+  if (grantedDocuments.includes(doc.id)) {
+    note.textContent = `✓ ${doc.id} was already granted to this client — this request will resolve synchronously, no deferral.`;
+    note.style.display = "block";
+  } else {
+    note.style.display = "none";
+  }
 }
 
 // --- Send token request ---
@@ -92,14 +129,28 @@ document.getElementById("send-btn").addEventListener("click", async () => {
     authorization_details: JSON.stringify(details),
     completion_mode: "deferred",
   });
-  appendLog("client", "POST /token  grant_type=client_credentials completion_mode=deferred");
+  appendLog("client", "POST /token  grant_type=client_credentials completion_mode=deferred", undefined, {
+    request: requestDetailFor(params),
+  });
   const res = await fetch(`${IDP}/token?session=${encodeURIComponent(sessionId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: basicAuthHeader() },
     body: params,
   });
   const data = await res.json();
-  appendLog("client", `response ${res.status}: ${data.error ?? "ok"}`);
+
+  if (res.ok) {
+    appendLog("client", "received 200 OK — access_token issued synchronously (already granted, no deferral)", undefined, {
+      response: { status: res.status, body: data },
+    });
+    setStatus("ok", "resolved synchronously — no deferral needed");
+    document.getElementById("result-card").style.display = "block";
+    document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
+    document.getElementById("send-btn").disabled = false;
+    return;
+  }
+
+  appendLog("client", `response ${res.status}: ${data.error ?? "ok"}`, undefined, { response: { status: res.status, body: data } });
 
   if (data.error === "authorization_pending" && data.deferral_code) {
     setStatus("pending", "authorization_pending — waiting on the resource owner");
@@ -121,7 +172,7 @@ function startPolling(code, interval) {
 
 async function poll(code) {
   const params = new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:deferred", deferral_code: code });
-  appendLog("client", `poll  deferral_code=${code.slice(0, 12)}…`);
+  appendLog("client", `poll  deferral_code=${code.slice(0, 12)}…`, undefined, { request: requestDetailFor(params) });
   const res = await fetch(`${IDP}/token?session=${encodeURIComponent(sessionId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: basicAuthHeader() },
@@ -130,14 +181,14 @@ async function poll(code) {
   const data = await res.json();
 
   if (res.ok) {
-    appendLog("client", "received 200 OK — access_token issued");
+    appendLog("client", "received 200 OK — access_token issued", undefined, { response: { status: res.status, body: data } });
     setStatus("ok", "resolved");
     document.getElementById("result-card").style.display = "block";
     document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
     return;
   }
 
-  appendLog("client", `poll response: ${data.error}`);
+  appendLog("client", `poll response: ${data.error}`, undefined, { response: { status: res.status, body: data } });
   switch (data.error) {
     case "authorization_pending":
       setStatus("pending", "authorization_pending — waiting on the resource owner");
@@ -165,6 +216,8 @@ async function poll(code) {
 
 function schedulePoll(code) {
   clearTimeout(pollTimer);
+  DTR.armResume(() => poll(code));
+  if (DTR.pollingPaused) return;
   pollTimer = setTimeout(() => poll(code), pollInterval * 1000);
 }
 
@@ -195,15 +248,4 @@ document.getElementById("reset-btn").addEventListener("click", async () => {
   document.getElementById("result-card").style.display = "none";
   setStatus("idle", "idle");
   appendLog("client", "session reset");
-});
-
-// --- Hamburger menu ---
-const menuBtn = document.getElementById("menu-btn");
-const menuDropdown = document.getElementById("menu-dropdown");
-menuBtn.addEventListener("click", (e) => {
-  e.stopPropagation();
-  menuDropdown.hidden = !menuDropdown.hidden;
-});
-document.addEventListener("click", (e) => {
-  if (!menuDropdown.hidden && !menuDropdown.contains(e.target) && e.target !== menuBtn) menuDropdown.hidden = true;
 });

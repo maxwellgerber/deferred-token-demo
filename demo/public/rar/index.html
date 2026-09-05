@@ -5,102 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DTR Sandbox — client_credentials + RAR</title>
 <meta name="description" content="Live sandbox for DTR with client_credentials and Rich Authorization Requests: no user in the grant, so resolution happens on the AS's own console.">
-<style>
-  :root {
-    color-scheme: light dark;
-    --bg: #ffffff; --bg-raised: #f6f7f9; --bg-code: #f1f2f5; --border: #e2e4e9;
-    --text: #14151a; --text-dim: #565a66; --accent: #6d3ff2; --accent-dim: #efe9fe;
-    --client: #2f6fed; --as: #b5590a; --ok: #0f7b3f; --pending: #a06400; --error: #b3261e;
-    --mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
-    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #101114; --bg-raised: #17181d; --bg-code: #1b1c22; --border: #2a2c34;
-      --text: #eceef2; --text-dim: #9a9fac; --accent: #a37bff; --accent-dim: #251b40;
-      --client: #7aa2ff; --as: #e0a94a; --ok: #4fd188; --pending: #e0b04a; --error: #ff6b64;
-    }
-  }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; }
-  body {
-    margin: 0; background: var(--bg); color: var(--text); font-family: var(--sans);
-    display: flex; flex-direction: column; height: 100vh; overflow: hidden;
-  }
-  code, pre, .mono { font-family: var(--mono); }
-  code { background: var(--bg-code); padding: .1em .35em; border-radius: 4px; font-size: .85em; }
-  pre { background: var(--bg-code); border: 1px solid var(--border); border-radius: 8px; padding: .8rem .9rem; overflow-x: auto; font-size: .78rem; line-height: 1.5; margin: .5rem 0; }
-  button { font: inherit; cursor: pointer; }
-
-  header.top {
-    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
-    padding: .6rem 1.2rem; border-bottom: 1px solid var(--border); flex-shrink: 0; flex-wrap: wrap;
-  }
-  header.top .brand { font-weight: 700; display: flex; gap: .6rem; align-items: baseline; }
-  header.top .brand small { color: var(--text-dim); font-weight: 500; font-size: .78rem; }
-  header.top a { color: var(--text-dim); text-decoration: none; font-size: .85rem; }
-  header.top a:hover { color: var(--text); }
-  .session-tag { font-size: .75rem; color: var(--text-dim); font-family: var(--mono); }
-  .reset-btn { font-size: .8rem; padding: .3rem .7rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-raised); color: var(--text); }
-
-  main.panels { flex: 1; display: grid; grid-template-columns: 1fr 1fr; overflow: hidden; min-height: 0; }
-  @media (max-width: 800px) { main.panels { grid-template-columns: 1fr; overflow-y: auto; } }
-  .panel { overflow-y: auto; padding: 1.1rem 1.3rem 2rem; min-height: 0; }
-  .panel.client { border-right: 1px solid var(--border); }
-  .panel h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; margin: 0 0 1rem; display: flex; align-items: center; gap: .5rem; }
-  .panel.client h2 { color: var(--client); }
-  .panel.as h2 { color: var(--as); }
-  .dot { width: .55rem; height: .55rem; border-radius: 50%; display: inline-block; }
-  .panel.client .dot { background: var(--client); }
-  .panel.as .dot { background: var(--as); }
-
-  .card { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 10px; padding: .9rem 1rem; margin-bottom: .9rem; }
-  .card h3 { font-size: .85rem; margin: 0 0 .6rem; }
-  label { display: block; font-size: .78rem; color: var(--text-dim); margin: .5rem 0 .2rem; }
-  input[type=text] { width: 100%; padding: .4rem .55rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: .85rem; font-family: var(--mono); }
-  .btn { padding: .5rem 1rem; border-radius: 7px; border: 1px solid transparent; font-weight: 600; font-size: .85rem; background: var(--accent); color: white; }
-  .btn:disabled { opacity: .4; cursor: not-allowed; }
-  .btn.secondary { background: var(--bg); border-color: var(--border); color: var(--text); }
-  .btn.approve { background: var(--ok); color: #05170c; }
-  .btn.deny { background: var(--error); color: #200604; }
-  .btn-row { display: flex; gap: .5rem; margin-top: .7rem; flex-wrap: wrap; }
-
-  .status-pill { display: inline-flex; align-items: center; gap: .4rem; font-size: .8rem; font-weight: 600; padding: .3rem .7rem; border-radius: 999px; background: var(--bg-code); }
-  .status-pill.pending { color: var(--pending); }
-  .status-pill.ok { color: var(--ok); }
-  .status-pill.error { color: var(--error); }
-  .status-pill.idle { color: var(--text-dim); }
-
-  dl.kv { display: grid; grid-template-columns: auto 1fr; gap: .25rem .8rem; font-size: .82rem; margin: 0; }
-  dl.kv dt { color: var(--text-dim); }
-  dl.kv dd { margin: 0; word-break: break-all; }
-
-  footer.tray { flex-shrink: 0; height: 30vh; border-top: 1px solid var(--border); display: flex; flex-direction: column; background: var(--bg-raised); }
-  footer.tray .tray-head { display: flex; align-items: center; justify-content: space-between; padding: .4rem .9rem; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); border-bottom: 1px solid var(--border); }
-  footer.tray .tray-body { flex: 1; overflow-y: auto; padding: .5rem .9rem; font-family: var(--mono); font-size: .78rem; }
-  .log-line { display: flex; gap: .6rem; padding: .12rem 0; }
-  .log-line .ts { color: var(--text-dim); flex-shrink: 0; }
-  .log-line .actor { flex-shrink: 0; font-weight: 700; width: 4.2rem; }
-  .log-line.client .actor { color: var(--client); }
-  .log-line.as .actor { color: var(--as); }
-  .log-line .msg { color: var(--text); }
-
-  .menu-wrap { position: relative; }
-  .hamburger-btn {
-    font-size: 1rem; line-height: 1; background: var(--bg-raised); border: 1px solid var(--border);
-    border-radius: 6px; padding: .35rem .6rem; color: var(--text);
-  }
-  .menu-dropdown {
-    position: absolute; top: calc(100% + .5rem); right: 0; width: 280px; background: var(--bg);
-    border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.18);
-    padding: .4rem; z-index: 20;
-  }
-  .menu-item { display: block; padding: .55rem .6rem; border-radius: 7px; text-decoration: none; color: var(--text); }
-  .menu-item:hover { background: var(--bg-raised); }
-  .menu-item.current { background: var(--accent-dim); }
-  .menu-kicker { font-size: .65rem; text-transform: uppercase; letter-spacing: .05em; color: var(--accent); font-weight: 700; }
-  .menu-title { font-size: .85rem; margin-top: .15rem; }
-</style>
+<link rel="stylesheet" href="/shared.css">
 </head>
 <body>
 
@@ -140,12 +45,15 @@
       <h3>1. Authorization request (RFC 9396)</h3>
       <p style="font-size:.8rem; color:var(--text-dim); margin:.2rem 0 .6rem;">
         This client authenticates with its own credentials only — there is no resource owner in
-        this grant at all.
+        this grant at all. It's requesting view access to one of three documents.
       </p>
-      <label>Amount (USD)</label>
-      <input type="text" id="f-amount" value="5000.00">
-      <label>Creditor account (IBAN)</label>
-      <input type="text" id="f-iban" value="DE89370400440532013000">
+      <label>Document</label>
+      <select id="f-document">
+        <option value="doc-1">doc-1 — Q3 Planning Doc</option>
+        <option value="doc-2">doc-2 — Engineering Roadmap</option>
+        <option value="doc-3">doc-3 — Budget Spreadsheet</option>
+      </select>
+      <p id="granted-note" style="display:none; font-size:.78rem; color:var(--ok); margin:.5rem 0 0;"></p>
       <pre id="details-view" style="margin-top:.6rem;"></pre>
     </div>
 
@@ -161,11 +69,12 @@
     </div>
 
     <div class="card">
-      <h3>3. Status</h3>
+      <h3>3. Status <button class="pause-btn" id="pause-btn" style="margin-left:auto;">Pause polling</button></h3>
       <div id="status-pill" class="status-pill idle">idle</div>
       <p style="font-size:.8rem; color:var(--text-dim); margin:.6rem 0 0;">
         There is no interaction_uri in this scenario — nothing for the client to show a human.
-        It just keeps polling.
+        If the document hasn't been granted yet, it just keeps polling; if it has, the token
+        comes back immediately.
       </p>
     </div>
 
@@ -177,6 +86,17 @@
 
   <section class="panel as">
     <h2><span class="dot"></span> Authorization Server — idp.deferred-token-response.dev</h2>
+
+    <div class="card">
+      <h3>Policy (stateful for this scenario)</h3>
+      <p style="font-size:.82rem; color:var(--text-dim); margin:0;">
+        The first request for a given document always requires the resource owner's explicit
+        confirmation. Once granted, the authorization server remembers — later requests for that
+        same document are issued a token immediately, with no deferral at all. A different,
+        never-requested document starts the review over again.
+      </p>
+    </div>
+
     <div class="card">
       <h3>Deferred request state</h3>
       <dl class="kv" id="as-state"><dt>status</dt><dd>—</dd></dl>
@@ -196,16 +116,16 @@
     </div>
 
     <div class="card">
-      <h3>Policy (fixed for this scenario)</h3>
-      <p style="font-size:.82rem; color:var(--text-dim); margin:0;">
-        Any payment-initiation request over this resource always requires the resource owner's
-        explicit confirmation — the client's own credentials are never sufficient alone.
-      </p>
+      <h3>Documents granted to this client</h3>
+      <ul id="granted-list" style="font-size:.82rem; color:var(--text-dim); margin:0; padding-left:1.1rem;">
+        None yet — every document starts ungranted.
+      </ul>
     </div>
   </section>
 </main>
 
 <footer class="tray">
+  <div class="tray-resize-handle" id="tray-resize-handle"></div>
   <div class="tray-head">
     <span>Logs — client + authorization server</span>
     <span id="log-count">0 events</span>
@@ -213,6 +133,7 @@
   <div class="tray-body" id="log-body"></div>
 </footer>
 
+<script src="/shared.js"></script>
 <script src="/rar/app.js"></script>
 </body>
 </html>
