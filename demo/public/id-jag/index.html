@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>DTR Sandbox — ID-JAG Interaction Required</title>
-<meta name="description" content="Live sandbox for the Deferred Token Response OAuth extension: ID-JAG assertion exchange requiring human interaction.">
+<meta name="description" content="Live sandbox for the Deferred Token Response OAuth extension: an ID-JAG requesting database access — reads are automatic, deletes require human interaction.">
 <link rel="stylesheet" href="/shared.css">
 </head>
 <body>
@@ -19,15 +19,15 @@
       <div class="menu-dropdown" id="menu-dropdown" hidden>
         <a href="/id-jag/" class="menu-item current">
           <div class="menu-kicker">interaction_required</div>
-          <div class="menu-title">ID-JAG, human interaction required</div>
+          <div class="menu-title">Human interaction after an identity assertion</div>
         </a>
         <a href="/rar/" class="menu-item">
           <div class="menu-kicker">stateful, authorization_pending</div>
-          <div class="menu-title">client_credentials + document access (RAR)</div>
+          <div class="menu-title">Document access that remembers approval</div>
         </a>
         <a href="/fraud-review/" class="menu-item">
-          <div class="menu-kicker">dual AS views</div>
-          <div class="menu-title">Fraud review after auth code consent</div>
+          <div class="menu-kicker">internal controls</div>
+          <div class="menu-title">Fraud review after user consent</div>
         </a>
         <a href="https://deferred-token-response.dev" class="menu-item" target="_blank" rel="noopener">
           <div class="menu-title">← DTR overview</div>
@@ -45,14 +45,18 @@
       <h3>1. Identity assertion (ID-JAG)</h3>
       <p style="font-size:.8rem; color:var(--text-dim); margin:.2rem 0 .6rem;">
         Pre-minted stand-in for what Token Exchange against the user's IdP would produce —
-        not part of DTR itself. Edit and re-mint to try different subjects or resources.
+        not part of DTR itself. Subject and resource are fixed for this scenario; pick a
+        scope and mint.
       </p>
       <label>Subject</label>
-      <input type="text" id="f-subject" value="alice@example.com">
+      <input type="text" value="alice@example.com" disabled>
       <label>Resource</label>
-      <input type="text" id="f-resource" value="https://api.example.com/wire-transfers">
+      <input type="text" value="db://prod-orders" disabled>
       <label>Scope</label>
-      <input type="text" id="f-scope" value="payments.write">
+      <select id="f-scope">
+        <option value="database.read">database.read</option>
+        <option value="database.delete">database.delete</option>
+      </select>
       <div class="btn-row">
         <button class="btn secondary" id="mint-btn">Mint assertion</button>
       </div>
@@ -85,11 +89,11 @@
   <section class="panel as">
     <h2><span class="dot"></span> Authorization Server — idp.deferred-token-response.dev</h2>
     <div class="card">
-      <h3>Policy (fixed for this scenario)</h3>
+      <h3>Policy (dynamic for this scenario)</h3>
       <p style="font-size:.82rem; color:var(--text-dim); margin:0;">
-        This resource server always requires human interaction before granting access via an
-        ID-JAG — the client cannot know this in advance, and discovers it through the deferred
-        response.
+        Reading from this database is granted automatically. Deleting from it always requires
+        human interaction via an ID-JAG — the client cannot know this in advance, and discovers
+        it through the deferred response.
       </p>
     </div>
     <div class="card">

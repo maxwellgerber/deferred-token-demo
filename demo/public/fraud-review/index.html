@@ -10,7 +10,7 @@
 <body>
 
 <header class="top">
-  <div class="brand">DTR Sandbox <small>fraud review · dual AS views</small></div>
+  <div class="brand">DTR Sandbox <small>fraud review · internal controls</small></div>
   <div style="display:flex; gap:1rem; align-items:center;">
     <span class="session-tag" id="session-tag"></span>
     <button class="reset-btn" id="reset-btn">Reset session</button>
@@ -19,15 +19,15 @@
       <div class="menu-dropdown" id="menu-dropdown" hidden>
         <a href="/id-jag/" class="menu-item">
           <div class="menu-kicker">interaction_required</div>
-          <div class="menu-title">ID-JAG, human interaction required</div>
+          <div class="menu-title">Human interaction after an identity assertion</div>
         </a>
         <a href="/rar/" class="menu-item">
           <div class="menu-kicker">stateful, authorization_pending</div>
-          <div class="menu-title">client_credentials + document access (RAR)</div>
+          <div class="menu-title">Document access that remembers approval</div>
         </a>
         <a href="/fraud-review/" class="menu-item current">
-          <div class="menu-kicker">dual AS views</div>
-          <div class="menu-title">Fraud review after auth code consent</div>
+          <div class="menu-kicker">internal controls</div>
+          <div class="menu-title">Fraud review after user consent</div>
         </a>
         <a href="https://deferred-token-response.dev" class="menu-item" target="_blank" rel="noopener">
           <div class="menu-title">← DTR overview</div>
@@ -42,10 +42,9 @@
     <h2><span class="dot"></span> Client</h2>
 
     <div class="card">
-      <h3>1. Authorization Code flow <span class="persona-tag end-user">real redirect</span></h3>
+      <h3>1. Authorization Code flow</h3>
       <p style="font-size:.8rem; color:var(--text-dim); margin:.2rem 0 .6rem;">
-        Opens a real consent screen for alice@example.com in a popup — not part of DTR itself,
-        this is the ordinary redirect-based grant upstream of it.
+        Complete a regular OAuth consent flow as <code>alice@example.com</code>.
       </p>
       <label>Amount (USD)</label>
       <input type="text" id="f-amount" value="12500.00">

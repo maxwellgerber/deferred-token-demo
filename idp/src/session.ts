@@ -264,8 +264,8 @@ export class DemoSession extends DurableObject<Env> {
   private async handleMintAssertion(request: Request): Promise<Response> {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const subject = (body.subject as string) || "alice@example.com";
-    const resource = (body.resource as string) || "https://api.example.com/wire-transfers";
-    const scope = (body.scope as string) || "payments.write";
+    const resource = (body.resource as string) || "db://prod-orders";
+    const scope = (body.scope as string) || "database.read";
     const now = Math.floor(Date.now() / 1000);
     const claims = {
       iss: "https://login.example.com",
@@ -378,17 +378,14 @@ export class DemoSession extends DurableObject<Env> {
     return response;
   }
 
-  // --- Scenario 1: ID-JAG, resource always requires interaction. ---
+  // --- Scenario 1: ID-JAG against a production database. database.read is granted
+  // automatically; database.delete always requires human interaction. ---
 
   private async handleIdJagRequest(form: FormData, clientId: string): Promise<Response> {
     const completionMode = String(form.get("completion_mode") ?? "").split(" ").filter(Boolean);
     const assertion = form.get("assertion");
     this.log(`token request received: grant_type=jwt-bearer completion_mode=${completionMode.join(",") || "(none)"}`);
 
-    if (!completionMode.includes("deferred")) {
-      this.log("client did not opt in to completion_mode=deferred — this demo requires it, since the resource always needs interaction");
-      return jsonResponse(400, { error: "invalid_request", error_description: "this resource requires completion_mode=deferred" });
-    }
     if (typeof assertion !== "string") {
       return jsonResponse(400, { error: "invalid_request", error_description: "missing assertion" });
     }
@@ -413,10 +410,27 @@ export class DemoSession extends DurableObject<Env> {
       return jsonResponse(400, { error: "invalid_grant", error_description: "client_id mismatch" });
     }
 
-    this.log(`assertion validated: sub=${decoded.claims.sub} resource=${decoded.claims.resource}`);
-    this.log("policy: this resource requires human interaction before every grant — deferring");
+    const scope = String(decoded.claims.scope ?? "");
+    this.log(`assertion validated: sub=${decoded.claims.sub} resource=${decoded.claims.resource} scope=${scope}`);
 
-    this.startDeferral(clientId, "id-jag", String(decoded.claims.scope ?? ""), {
+    if (!scope.includes("database.delete")) {
+      this.log("policy: database.read is granted automatically — no interaction needed");
+      return tokenSuccessResponse({
+        access_token: `demo_at_${generateOpaqueId(96)}`,
+        token_type: "Bearer",
+        expires_in: 3600,
+        scope,
+      });
+    }
+
+    if (!completionMode.includes("deferred")) {
+      this.log("client did not opt in to completion_mode=deferred — database.delete always needs interaction");
+      return jsonResponse(400, { error: "invalid_request", error_description: "database.delete requires completion_mode=deferred" });
+    }
+
+    this.log("policy: database.delete always requires human interaction before granting access — deferring");
+
+    this.startDeferral(clientId, "id-jag", scope, {
       subject: String(decoded.claims.sub),
       resource: String(decoded.claims.resource),
     });

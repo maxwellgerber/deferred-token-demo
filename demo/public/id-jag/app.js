@@ -53,11 +53,14 @@ function renderAsState(state) {
 }
 
 // --- Step 1: mint assertion ---
+// Subject and resource are fixed for this scenario — only the scope varies.
+const FIXED_SUBJECT = "alice@example.com";
+const FIXED_RESOURCE = "db://prod-orders";
 let currentAssertion = null;
 document.getElementById("mint-btn").addEventListener("click", async () => {
   const body = {
-    subject: document.getElementById("f-subject").value,
-    resource: document.getElementById("f-resource").value,
+    subject: FIXED_SUBJECT,
+    resource: FIXED_RESOURCE,
     scope: document.getElementById("f-scope").value,
   };
   appendLog("client", `requesting a fresh ID-JAG for ${body.subject}`);
@@ -98,6 +101,18 @@ document.getElementById("send-btn").addEventListener("click", async () => {
   });
   const data = await res.json();
   appendLog("client", `response ${res.status}: ${data.error ?? "ok"}`, undefined, { response: { status: res.status, body: data } });
+
+  if (res.ok) {
+    appendLog("client", "received 200 OK — access_token issued synchronously (database.read is auto-approved)", undefined, {
+      response: { status: res.status, body: data },
+    });
+    DTR.endAttempt();
+    setStatus("ok", "resolved synchronously — no interaction needed");
+    document.getElementById("result-card").style.display = "block";
+    document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
+    document.getElementById("send-btn").disabled = false;
+    return;
+  }
 
   if (data.error === "authorization_pending" && data.deferral_code) {
     setStatus("pending", "authorization_pending — polling…");
