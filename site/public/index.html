@@ -328,12 +328,12 @@
 <header class="top">
   <div class="brand">DTR <small>OAuth extension · draft</small></div>
   <nav class="top-links">
-    <a href="#scenarios">Try the scenarios</a>
     <a href="#why-dtr">Why DTR</a>
+    <a href="#scenarios">Try the scenarios</a>
     <a href="#flow">How it works</a>
     <a href="#reference">Protocol reference</a>
   </nav>
-  <a class="cta" href="https://demo.deferred-token-response.dev/fraud-review/" target="_blank" rel="noopener">Try fraud review →</a>
+  <a class="cta" href="https://demo.deferred-token-response.dev/" target="_blank" rel="noopener">Try the demo →</a>
 </header>
 
 <main>
@@ -356,10 +356,9 @@
       client receive the result.
     </p>
     <div class="hero-cta-row">
-      <a class="hero-cta" href="https://demo.deferred-token-response.dev/fraud-review/" target="_blank" rel="noopener">Try fraud review →</a>
+      <a class="hero-cta" href="https://demo.deferred-token-response.dev/" target="_blank" rel="noopener">Try the demo →</a>
       <a class="hero-cta-secondary" href="#scenarios">Explore all scenarios</a>
     </div>
-    <p class="hero-support">Sample inputs are included. Transfers and approvals are simulated; no real money moves.</p>
   </div>
 
   <div class="draft-notice">
@@ -367,8 +366,46 @@
     specification defines the full protocol. Read the draft for requirements and security
     considerations.
     <br>
-    <a href="https://github.com/maxwellgerber/deferred-token-response" target="_blank" rel="noopener">Read the specification →</a>
+    <a href="https://datatracker.ietf.org/doc/draft-gerber-oauth-deferred-token-response/" target="_blank" rel="noopener">Read the specification →</a>
   </div>
+
+  <section id="why-dtr">
+    <div class="section-kicker">The problem</div>
+    <h2>Some authorization decisions take longer than a request</h2>
+    <p>
+      An application may have everything it needs to ask for access before the authorization
+      server has everything it needs to grant it. A fraud analyst might need to review a
+      transfer, a document owner might need to approve a service, or an automated check might
+      still be running.
+    </p>
+    <p>
+      A token request normally ends with a token response or an error. DTR adds a defined way to
+      keep that authorization decision pending: the server returns a deferral code, and the
+      client checks for the eventual result.
+    </p>
+    <p>
+      The authorization server decides whether a particular request needs to wait. The same
+      client can receive an immediate token for one request and a deferred response for another.
+    </p>
+    <div class="usecases">
+      <div class="usecase">
+        <h4>Fraud review</h4>
+        <p>A separate reviewer checks a sensitive request after the user has consented.</p>
+      </div>
+      <div class="usecase">
+        <h4>Document approval</h4>
+        <p>A resource owner grants a service access through an internal review process.</p>
+      </div>
+      <div class="usecase">
+        <h4>Agent authorization</h4>
+        <p>An agent requests access that needs an additional approval before it can proceed.</p>
+      </div>
+      <div class="usecase">
+        <h4>Long-running checks</h4>
+        <p>Identity verification or other policy checks finish after the original token request.</p>
+      </div>
+    </div>
+  </section>
 
   <section id="scenarios">
     <div class="section-kicker">Try it</div>
@@ -426,44 +463,6 @@
     </div>
   </section>
 
-  <section id="why-dtr">
-    <div class="section-kicker">The problem</div>
-    <h2>Some authorization decisions take longer than a request</h2>
-    <p>
-      An application may have everything it needs to ask for access before the authorization
-      server has everything it needs to grant it. A fraud analyst might need to review a
-      transfer, a document owner might need to approve a service, or an automated check might
-      still be running.
-    </p>
-    <p>
-      A token request normally ends with a token response or an error. DTR adds a defined way to
-      keep that authorization decision pending: the client opts in, the server returns a deferral
-      code, and the client checks for the eventual result.
-    </p>
-    <p>
-      The authorization server decides whether a particular request needs to wait. The same
-      client can receive an immediate token for one request and a deferred response for another.
-    </p>
-    <div class="usecases">
-      <div class="usecase">
-        <h4>Fraud review</h4>
-        <p>A separate reviewer checks a sensitive request after the user has consented.</p>
-      </div>
-      <div class="usecase">
-        <h4>Document approval</h4>
-        <p>A resource owner grants a service access through an internal review process.</p>
-      </div>
-      <div class="usecase">
-        <h4>Agent authorization</h4>
-        <p>An agent requests access that needs an additional approval before it can proceed.</p>
-      </div>
-      <div class="usecase">
-        <h4>Long-running checks</h4>
-        <p>Identity verification or other policy checks finish after the original token request.</p>
-      </div>
-    </div>
-  </section>
-
   <section id="flow">
     <div class="section-kicker">The mechanism</div>
     <h2>Request. Wait. Collect the result.</h2>
@@ -502,7 +501,7 @@
         <text x="320" y="145" text-anchor="middle" font-size="11.5" class="dim mono">deferral_code, expires_in, interval</text>
 
         <rect x="60" y="175" width="520" height="90" rx="8" fill="none" stroke-dasharray="3 3" class="lifeline"/>
-        <text x="320" y="192" text-anchor="middle" font-size="11" class="dim">Poll at the permitted interval while pending.</text>
+        <text x="320" y="192" text-anchor="middle" font-size="11" font-weight="700" class="dim">↻ Poll at the permitted interval while pending — repeats until resolved</text>
 
         <line class="msg" x1="90" y1="215" x2="550" y2="215" marker-end="url(#arrow)"/>
         <text x="320" y="207" text-anchor="middle" font-size="12" class="mono">POST /token — deferred grant + deferral_code</text>
@@ -537,17 +536,17 @@
     <h2>The OAuth terms used here</h2>
     <p>
       OAuth lets an application obtain limited access to a protected resource. These are the
-      roles you will see in the demos:
+      terms you will see in the demos:
     </p>
     <table class="params">
       <tr><th>Term</th><th>Meaning</th></tr>
-      <tr><td>Client</td><td>The application or service asking for access.</td></tr>
-      <tr><td>Authorization server</td><td>The system that evaluates the request and issues an access token when access is granted.</td></tr>
-      <tr><td>Resource server</td><td>The API or service that accepts the token and provides access to the protected resource.</td></tr>
-      <tr><td>Resource owner</td><td>The person or organization with authority over the resource. Some examples include an end user; others use a service acting on its own behalf.</td></tr>
-      <tr><td>Access token</td><td>A credential the client presents to a resource server.</td></tr>
-      <tr><td>Grant type</td><td>The mechanism the client uses to request a token, such as an authorization code or client credentials.</td></tr>
-      <tr><td>Deferral code</td><td>A code the client uses to retrieve the outcome of a pending token request. It is not an access token.</td></tr>
+      <tr><td><strong>Client</strong></td><td>The application or service asking for access.</td></tr>
+      <tr><td><strong>Authorization server</strong></td><td>The system that evaluates the request and issues an access token when access is granted.</td></tr>
+      <tr><td><strong>Resource server</strong></td><td>The API or service that accepts the token and provides access to the protected resource.</td></tr>
+      <tr><td><strong>Resource owner</strong></td><td>The person or organization with authority over the resource. Some examples include an end user; others use an external system or back-office process.</td></tr>
+      <tr><td><strong>Access token</strong></td><td>A credential the client presents to a resource server.</td></tr>
+      <tr><td><strong>Grant type</strong></td><td>The mechanism the client uses to request a token, such as an authorization code or client credentials.</td></tr>
+      <tr><td><strong>Deferral code</strong></td><td>A code the client uses to retrieve the outcome of a pending token request. It is not an access token.</td></tr>
     </table>
     <p>
       DTR extends the token response process. The original grant still establishes the basis for
@@ -579,11 +578,13 @@
 Host: server.example.com
 Content-Type: application/x-www-form-urlencoded
 
-grant_type=authorization_code&amp;code=example_authorization_code&amp;redirect_uri=https%3A%2F%2Fclient.example.org%2Fcb&amp;completion_mode=deferred</code></pre>
+grant_type=authorization_code
+&amp;code=example_authorization_code
+&amp;redirect_uri=https%3A%2F%2Fclient.example.org%2Fcb
+&amp;completion_mode=deferred</code></pre>
         <p>
           Opting in does not force a delay. The server can still return a token immediately. For
-          grants with an earlier request step, the client can also send an advance hint there; the
-          token request must still carry the required opt-in.
+          grants with an earlier request step, the client can also send an advance hint there.
         </p>
       </li>
 
@@ -620,13 +621,22 @@ Cache-Control: no-store
         <h3>Poll for the outcome</h3>
         <p>
           The client sends the deferral code to the token endpoint using the deferred grant type,
-          respecting the server&rsquo;s polling interval.
+          respecting the server&rsquo;s polling interval. The server responds with a variety of
+          error codes depending on the state of the request.
         </p>
         <pre><code>POST /token HTTP/1.1
 Host: server.example.com
 Content-Type: application/x-www-form-urlencoded
 
-grant_type=urn:ietf:params:oauth:grant-type:deferred&amp;deferral_code=example_deferral_code</code></pre>
+grant_type=urn:ietf:params:oauth:grant-type:deferred
+&amp;deferral_code=example_deferral_code</code></pre>
+        <pre><code>HTTP/1.1 400 Bad Request
+Content-Type: application/json
+Cache-Control: no-store
+
+{
+  "error": "authorization_pending"
+}</code></pre>
         <ul class="error-list">
           <li class="pending">
             <span><code class="err">authorization_pending</code></span>
@@ -710,9 +720,8 @@ Cache-Control: no-store
       separate reviewer, or an internal process.
     </p>
     <p>
-      The demos make that difference visible. The identity assertion example supplies an
-      interaction link. The document and fraud examples resolve through a separate server-side
-      review console.
+      DTR is a general purpose mechanism that can be applied to many scenarios, such as fraud and
+      abuse protection, AI agent permissions management, document sharing, and e-commerce.
     </p>
   </section>
 
