@@ -102,6 +102,15 @@
     border-radius: 6px;
     font-weight: 600;
   }
+  nav.top-links span.cta-soon {
+    color: var(--text-dim);
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    padding: .35rem .8rem;
+    border-radius: 6px;
+    font-weight: 600;
+    cursor: default;
+  }
 
   main { max-width: 760px; margin: 0 auto; padding: 0 1.5rem 5rem; }
 
@@ -262,7 +271,7 @@
     <a href="#flow">The flow</a>
     <a href="#reference">Reference</a>
     <a href="https://github.com/maxwellgerber/deferred-token-response">GitHub</a>
-    <a class="cta" href="https://demo.deferred-token-response.dev">Try the demo →</a>
+    <span class="cta-soon" title="Interactive sandbox in progress">Live demo — coming soon</span>
   </nav>
 </header>
 
@@ -507,7 +516,7 @@ grant_type=urn:ietf:params:oauth:grant-type:deferred
             <span>
               The interaction has been started (the user has reached <code>interaction_uri</code>,
               or the server-side process has begun) but hasn't finished yet. Keep polling.
-              <span class="approved-note">From an approved, not-yet-merged PR (#68) — worth confirming before it ships on this site.</span>
+              <span class="approved-note">Proposed in <a href="https://github.com/maxwellgerber/deferred-token-response/pull/68">PR #68</a>, approved, pending merge.</span>
             </span>
           </li>
           <li>
@@ -573,7 +582,7 @@ Cache-Control: no-store
     </div>
     <div>
       <a href="https://github.com/maxwellgerber/deferred-token-response">Draft source</a> ·
-      <a href="https://demo.deferred-token-response.dev">Sandbox demo</a>
+      Sandbox demo coming soon
     </div>
   </div>
 </footer>
