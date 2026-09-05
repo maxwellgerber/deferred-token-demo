@@ -10,7 +10,12 @@ export interface Env extends SessionEnv {
 const DISCOVERY_METADATA = {
   issuer: ISSUER,
   token_endpoint: `${ISSUER}/token`,
-  grant_types_supported: ["urn:ietf:params:oauth:grant-type:jwt-bearer", "urn:ietf:params:oauth:grant-type:deferred"],
+  grant_types_supported: [
+    "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    "client_credentials",
+    "authorization_code",
+    "urn:ietf:params:oauth:grant-type:deferred",
+  ],
   deferred_token_response_supported: true,
   authorization_grant_profiles_supported: ["urn:ietf:params:oauth:grant-profile:id-jag"],
 };

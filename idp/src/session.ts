@@ -21,33 +21,60 @@ type DeferralStatus =
   | "denied"
   | "expired";
 
+type Scenario = "id-jag" | "rar-client-credentials" | "fraud-review";
+
+// Scenarios differ in how a pending request ever gets resolved:
+// - id-jag: the client is handed an interaction_uri and can route a human there itself.
+// - rar-client-credentials / fraud-review: nobody the client can reach needs to act — the
+//   resource owner or a reviewer acts through the authorization server's own console. These
+//   scenarios never leave authorization_pending; there is no interaction_uri to hand out.
+const SCENARIOS_WITH_CLIENT_ROUTABLE_INTERACTION: Scenario[] = ["id-jag"];
+
 interface DeferralRecord {
   status: DeferralStatus;
+  scenario: Scenario;
   deferral_code: string;
   created_at: number;
   expires_in: number;
   interval: number;
   interaction_uri: string;
   client_id: string;
-  subject: string;
-  resource: string;
   scope: string;
   last_poll_at: number;
+  // Scenario-specific fields, shown as-is in the AS panel and admin/state.
+  context: Record<string, string>;
+  // Scenario-specific data needed to build an accurate success response.
+  authorizationDetails?: unknown[];
+}
+
+interface PendingAuthCode {
+  code: string;
+  subject: string;
+  amount: string;
+  recipient: string;
+  scope: string;
+  redeemed: boolean;
 }
 
 export class DemoSession extends DurableObject<Env> {
   private deferral: DeferralRecord | null = null;
+  private pendingAuthCode: PendingAuthCode | null = null;
   private loaded = false;
   private sockets: Set<WebSocket> = new Set();
 
   private async ensureLoaded() {
     if (this.loaded) return;
     this.deferral = ((await this.ctx.storage.get("deferral")) as DeferralRecord | undefined) ?? null;
+    this.pendingAuthCode = ((await this.ctx.storage.get("pendingAuthCode")) as PendingAuthCode | undefined) ?? null;
     this.loaded = true;
   }
 
   private async persist() {
     await this.ctx.storage.put("deferral", this.deferral);
+  }
+
+  private async persistAuthCode() {
+    await this.ctx.storage.put("pendingAuthCode", this.pendingAuthCode);
   }
 
   private log(message: string) {
@@ -82,12 +109,16 @@ export class DemoSession extends DurableObject<Env> {
     if (url.pathname === "/events") return this.handleWebSocket();
     if (url.pathname === "/token" && request.method === "POST") return this.handleToken(request, sessionId);
     if (url.pathname === "/interact" && request.method === "GET") return this.handleInteractionPage(url, sessionId);
-    if (url.pathname === "/interact" && request.method === "POST") return this.handleInteractionDecision(request, sessionId);
+    if (url.pathname === "/interact" && request.method === "POST") return this.handleInteractionDecision(request);
     if (url.pathname === "/admin/mint-assertion" && request.method === "POST") return this.handleMintAssertion(request);
+    if (url.pathname === "/admin/seed-auth-code" && request.method === "POST") return this.handleSeedAuthCode(request);
+    if (url.pathname === "/admin/decide" && request.method === "POST") return this.handleAdminDecide(request);
     if (url.pathname === "/admin/state" && request.method === "GET") return jsonResponse(200, { state: this.deferral });
     if (url.pathname === "/admin/reset" && request.method === "POST") {
       this.deferral = null;
+      this.pendingAuthCode = null;
       await this.persist();
+      await this.persistAuthCode();
       this.log("session reset");
       this.broadcastState();
       return jsonResponse(200, { ok: true });
@@ -125,6 +156,9 @@ export class DemoSession extends DurableObject<Env> {
     return null;
   }
 
+  // --- Admin/setup endpoints: these stand in for steps upstream of DTR itself (minting an
+  // identity assertion via Token Exchange, or a user completing the Authorization Code flow). ---
+
   private async handleMintAssertion(request: Request): Promise<Response> {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const subject = (body.subject as string) || "alice@example.com";
@@ -147,6 +181,27 @@ export class DemoSession extends DurableObject<Env> {
     return jsonResponse(200, { assertion, claims });
   }
 
+  private async handleSeedAuthCode(request: Request): Promise<Response> {
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const subject = (body.subject as string) || "alice@example.com";
+    const amount = (body.amount as string) || "5000.00";
+    const recipient = (body.recipient as string) || "acct:9F2C-created-by-alice";
+    const scope = (body.scope as string) || "wire_transfers.initiate";
+    this.pendingAuthCode = {
+      code: `demo_code_${generateOpaqueId(96)}`,
+      subject,
+      amount,
+      recipient,
+      scope,
+      redeemed: false,
+    };
+    await this.persistAuthCode();
+    this.log(
+      `${subject} completed the regular Authorization Code flow and granted ${scope} for a $${amount} transfer to ${recipient} (not shown here — this stands in for that redirect flow)`,
+    );
+    return jsonResponse(200, { code: this.pendingAuthCode.code, subject, amount, recipient, scope });
+  }
+
   private async handleToken(request: Request, sessionId: string): Promise<Response> {
     const clientId = this.authenticateClient(request);
     if (!clientId) {
@@ -159,7 +214,13 @@ export class DemoSession extends DurableObject<Env> {
     const grantType = form.get("grant_type");
 
     if (grantType === "urn:ietf:params:oauth:grant-type:jwt-bearer") {
-      return this.handleInitialRequest(form, clientId);
+      return this.handleIdJagRequest(form, clientId);
+    }
+    if (grantType === "client_credentials") {
+      return this.handleClientCredentialsRequest(form, clientId);
+    }
+    if (grantType === "authorization_code") {
+      return this.handleAuthorizationCodeRequest(form, clientId);
     }
     if (grantType === "urn:ietf:params:oauth:grant-type:deferred") {
       return this.handlePoll(form, clientId, sessionId);
@@ -168,19 +229,17 @@ export class DemoSession extends DurableObject<Env> {
     return jsonResponse(400, { error: "unsupported_grant_type" });
   }
 
-  private async handleInitialRequest(form: FormData, clientId: string): Promise<Response> {
+  // --- Scenario 1: ID-JAG, resource always requires interaction. ---
+
+  private async handleIdJagRequest(form: FormData, clientId: string): Promise<Response> {
     const completionMode = String(form.get("completion_mode") ?? "").split(" ").filter(Boolean);
     const assertion = form.get("assertion");
     this.log(`token request received: grant_type=jwt-bearer completion_mode=${completionMode.join(",") || "(none)"}`);
 
     if (!completionMode.includes("deferred")) {
       this.log("client did not opt in to completion_mode=deferred — this demo requires it, since the resource always needs interaction");
-      return jsonResponse(400, {
-        error: "invalid_request",
-        error_description: "this resource requires completion_mode=deferred",
-      });
+      return jsonResponse(400, { error: "invalid_request", error_description: "this resource requires completion_mode=deferred" });
     }
-
     if (typeof assertion !== "string") {
       return jsonResponse(400, { error: "invalid_request", error_description: "missing assertion" });
     }
@@ -192,7 +251,6 @@ export class DemoSession extends DurableObject<Env> {
       this.log(`assertion rejected: ${err instanceof JwtValidationError ? err.message : "invalid"}`);
       return jsonResponse(400, { error: "invalid_grant", error_description: "assertion validation failed" });
     }
-
     if (decoded.header.typ !== "oauth-id-jag+jwt") {
       this.log("assertion rejected: unexpected typ header");
       return jsonResponse(400, { error: "invalid_grant", error_description: "expected an ID-JAG (typ=oauth-id-jag+jwt)" });
@@ -209,29 +267,123 @@ export class DemoSession extends DurableObject<Env> {
     this.log(`assertion validated: sub=${decoded.claims.sub} resource=${decoded.claims.resource}`);
     this.log("policy: this resource requires human interaction before every grant — deferring");
 
+    this.startDeferral(clientId, "id-jag", String(decoded.claims.scope ?? ""), {
+      subject: String(decoded.claims.sub),
+      resource: String(decoded.claims.resource),
+    });
+    await this.persist();
+    this.broadcastState();
+    this.log(`returning authorization_pending, deferral_code=${this.deferral!.deferral_code.slice(0, 12)}…`);
+
+    return deferredErrorResponse("authorization_pending", {
+      deferral_code: this.deferral!.deferral_code,
+      expires_in: this.deferral!.expires_in,
+      interval: this.deferral!.interval,
+    });
+  }
+
+  // --- Scenario 2: client_credentials + RAR. No user in this grant at all, so nobody the
+  // client can reach needs to act — the resource owner reviews and decides through the
+  // authorization server's own console (this demo's AS panel), not an interaction_uri. ---
+
+  private async handleClientCredentialsRequest(form: FormData, clientId: string): Promise<Response> {
+    const completionMode = String(form.get("completion_mode") ?? "").split(" ").filter(Boolean);
+    const rawDetails = form.get("authorization_details");
+    this.log(`token request received: grant_type=client_credentials completion_mode=${completionMode.join(",") || "(none)"}`);
+
+    if (!completionMode.includes("deferred")) {
+      this.log("client did not opt in to completion_mode=deferred — this demo requires it, since owner confirmation is always needed");
+      return jsonResponse(400, { error: "invalid_request", error_description: "this resource requires completion_mode=deferred" });
+    }
+
+    let details: unknown[];
+    try {
+      details = JSON.parse(String(rawDetails ?? "[]"));
+      if (!Array.isArray(details)) throw new Error("not an array");
+    } catch {
+      return jsonResponse(400, { error: "invalid_request", error_description: "authorization_details must be a JSON array (RFC 9396)" });
+    }
+
+    this.log(`authorization_details received: ${JSON.stringify(details)}`);
+    this.log(
+      "policy: this resource requires the resource owner to confirm — client_credentials carries no user context, " +
+        "so there is no one for the client to route an interaction_uri to. Resolution happens on the AS's own console.",
+    );
+
+    this.startDeferral(clientId, "rar-client-credentials", "", {
+      authorization_details: JSON.stringify(details, null, 2),
+    });
+    this.deferral!.authorizationDetails = details;
+    await this.persist();
+    this.broadcastState();
+    this.log(`returning authorization_pending, deferral_code=${this.deferral!.deferral_code.slice(0, 12)}… (no interaction_uri — none will ever be issued)`);
+
+    return deferredErrorResponse("authorization_pending", {
+      deferral_code: this.deferral!.deferral_code,
+      expires_in: this.deferral!.expires_in,
+      interval: this.deferral!.interval,
+    });
+  }
+
+  // --- Scenario 3: fraud review. A real end user already granted consent via the ordinary
+  // Authorization Code flow (pre-seeded here — that redirect dance is upstream of DTR).
+  // A fraud reviewer, not the end user, must additionally approve before the token issues. ---
+
+  private async handleAuthorizationCodeRequest(form: FormData, clientId: string): Promise<Response> {
+    const completionMode = String(form.get("completion_mode") ?? "").split(" ").filter(Boolean);
+    const code = form.get("code");
+    this.log(`token request received: grant_type=authorization_code completion_mode=${completionMode.join(",") || "(none)"}`);
+
+    if (!completionMode.includes("deferred")) {
+      this.log("client did not opt in to completion_mode=deferred — this demo requires it, since every transfer goes to fraud review");
+      return jsonResponse(400, { error: "invalid_request", error_description: "this resource requires completion_mode=deferred" });
+    }
+    if (!this.pendingAuthCode || this.pendingAuthCode.code !== code || this.pendingAuthCode.redeemed) {
+      this.log("authorization_code rejected: unrecognized or already-redeemed code");
+      return jsonResponse(400, { error: "invalid_grant" });
+    }
+
+    const { subject, amount, recipient, scope } = this.pendingAuthCode;
+    this.pendingAuthCode.redeemed = true;
+    await this.persistAuthCode();
+
+    this.log(`authorization_code validated: end user ${subject} already granted ${scope} for this transfer via the regular auth code flow`);
+    this.log(`policy: transfers of this size are always routed to fraud review before the token is issued — deferring`);
+
+    this.startDeferral(clientId, "fraud-review", scope, {
+      subject,
+      amount: `$${amount}`,
+      recipient,
+    });
+    await this.persist();
+    this.broadcastState();
+    this.log(`returning authorization_pending, deferral_code=${this.deferral!.deferral_code.slice(0, 12)}… (no interaction_uri — the end user already consented; only the reviewer's decision remains)`);
+
+    return deferredErrorResponse("authorization_pending", {
+      deferral_code: this.deferral!.deferral_code,
+      expires_in: this.deferral!.expires_in,
+      interval: this.deferral!.interval,
+    });
+  }
+
+  private startDeferral(clientId: string, scenario: Scenario, scope: string, context: Record<string, string>) {
     this.deferral = {
       status: "authorization_pending",
+      scenario,
       deferral_code: generateOpaqueId(),
       created_at: Date.now(),
       expires_in: DEFERRAL_EXPIRES_IN,
       interval: POLL_INTERVAL,
       interaction_uri: "",
       client_id: clientId,
-      subject: String(decoded.claims.sub),
-      resource: String(decoded.claims.resource),
-      scope: String(decoded.claims.scope ?? ""),
+      scope,
       last_poll_at: 0,
+      context,
     };
-    await this.persist();
-    this.broadcastState();
-    this.log(`returning authorization_pending, deferral_code=${this.deferral.deferral_code.slice(0, 12)}…`);
-
-    return deferredErrorResponse("authorization_pending", {
-      deferral_code: this.deferral.deferral_code,
-      expires_in: this.deferral.expires_in,
-      interval: this.deferral.interval,
-    });
   }
+
+  // --- Polling: the DTR substrate. Identical across scenarios except which ones ever offer
+  // an interaction_uri (see SCENARIOS_WITH_CLIENT_ROUTABLE_INTERACTION). ---
 
   private async handlePoll(form: FormData, clientId: string, sessionId: string): Promise<Response> {
     const code = form.get("deferral_code");
@@ -254,9 +406,9 @@ export class DemoSession extends DurableObject<Env> {
     }
     this.deferral.last_poll_at = now;
 
-    // First poll after the initial deferral is where this scenario's policy becomes visible
-    // to the client: the resource always needs interaction.
-    if (this.deferral.status === "authorization_pending") {
+    const routable = SCENARIOS_WITH_CLIENT_ROUTABLE_INTERACTION.includes(this.deferral.scenario);
+
+    if (this.deferral.status === "authorization_pending" && routable) {
       this.deferral.status = "interaction_required";
       this.deferral.interaction_uri = `${ISSUER}/interact?session=${encodeURIComponent(sessionId)}&code=${this.deferral.deferral_code}`;
       await this.persist();
@@ -268,6 +420,11 @@ export class DemoSession extends DurableObject<Env> {
         expires_in: this.deferral.expires_in,
         interval: this.deferral.interval,
       });
+    }
+
+    if (this.deferral.status === "authorization_pending") {
+      this.log("poll response: authorization_pending (unchanged — waiting on the AS console, nothing for the client to do)");
+      return jsonResponse(400, { error: "authorization_pending" });
     }
 
     if (this.deferral.status === "interaction_required") {
@@ -290,18 +447,25 @@ export class DemoSession extends DurableObject<Env> {
       await this.persist();
       this.broadcastState();
       this.log("poll response: 200 OK — access_token issued, deferral_code redeemed");
-      return tokenSuccessResponse({
+      const response: Record<string, unknown> = {
         access_token: `demo_at_${generateOpaqueId(96)}`,
         token_type: "Bearer",
         expires_in: 3600,
-        scope: this.deferral.scope,
-      });
+      };
+      if (this.deferral.scope) response.scope = this.deferral.scope;
+      if (this.deferral.authorizationDetails) response.authorization_details = this.deferral.authorizationDetails;
+      return tokenSuccessResponse(response);
     }
 
     // redeemed or expired
     this.log(`poll rejected: deferral_code already ${this.deferral.status}`);
     return jsonResponse(400, { error: this.deferral.status === "expired" ? "expired_token" : "invalid_grant" });
   }
+
+  // --- Resolution paths ---
+  // Scenario 1: a human navigates to a dedicated interaction page (client-routable).
+  // Scenarios 2 & 3: the decision is made directly on the AS panel — /admin/decide — since
+  // nobody was ever handed a link to click.
 
   private handleInteractionPage(url: URL, sessionId: string): Response {
     const code = url.searchParams.get("code");
@@ -318,9 +482,9 @@ export class DemoSession extends DurableObject<Env> {
       renderInteractPage({
         sessionId,
         code,
-        subject: this.deferral.subject,
+        subject: this.deferral.context.subject,
         clientId: this.deferral.client_id,
-        resource: this.deferral.resource,
+        resource: this.deferral.context.resource,
         scope: this.deferral.scope,
         decided: this.deferral.status === "resolved" || this.deferral.status === "redeemed" || this.deferral.status === "denied",
         status: this.deferral.status,
@@ -329,7 +493,9 @@ export class DemoSession extends DurableObject<Env> {
     );
   }
 
-  private async handleInteractionDecision(request: Request, sessionId: string): Promise<Response> {
+  private async handleInteractionDecision(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const sessionId = url.searchParams.get("session") ?? "";
     const form = await request.formData();
     const code = form.get("code");
     const decision = form.get("decision");
@@ -338,7 +504,7 @@ export class DemoSession extends DurableObject<Env> {
     }
     if (decision === "approve") {
       this.deferral.status = "resolved";
-      this.log(`user approved the request at the interaction page (subject=${this.deferral.subject})`);
+      this.log(`user approved the request at the interaction page (subject=${this.deferral.context.subject})`);
     } else {
       this.deferral.status = "denied";
       this.log("user denied the request at the interaction page");
@@ -349,15 +515,34 @@ export class DemoSession extends DurableObject<Env> {
       renderInteractPage({
         sessionId,
         code,
-        subject: this.deferral.subject,
+        subject: this.deferral.context.subject,
         clientId: this.deferral.client_id,
-        resource: this.deferral.resource,
+        resource: this.deferral.context.resource,
         scope: this.deferral.scope,
         decided: true,
         status: this.deferral.status,
       }),
       { headers: { "Content-Type": "text/html" } },
     );
+  }
+
+  private async handleAdminDecide(request: Request): Promise<Response> {
+    const body = (await request.json().catch(() => ({}))) as { decision?: string };
+    if (!this.deferral) return jsonResponse(404, { error: "no_active_request" });
+    if (SCENARIOS_WITH_CLIENT_ROUTABLE_INTERACTION.includes(this.deferral.scenario)) {
+      return jsonResponse(400, { error: "invalid_request", error_description: "this scenario resolves via the interaction page, not the admin console" });
+    }
+    const actor = this.deferral.scenario === "rar-client-credentials" ? "resource owner" : "fraud reviewer";
+    if (body.decision === "approve") {
+      this.deferral.status = "resolved";
+      this.log(`${actor} approved the request via the AS console`);
+    } else {
+      this.deferral.status = "denied";
+      this.log(`${actor} denied the request via the AS console`);
+    }
+    await this.persist();
+    this.broadcastState();
+    return jsonResponse(200, { ok: true, status: this.deferral.status });
   }
 }
 
