@@ -96,6 +96,17 @@ Key things to know before touching it:
 - The demo client's credentials (`demo-client` / `demo-secret`) and `DEMO_JWT_SECRET` are
   intentionally public/fake — this is a public educational sandbox, not a real deployment, so
   don't treat hardcoded secrets here as a finding.
+- **Every session has a rolling 24h TTL.** `fetch()` calls `this.ctx.storage.setAlarm(Date.now() +
+  SESSION_TTL_MS)` on every request (including the WebSocket upgrade and polling), pushing expiry
+  out another day; `alarm()` wipes the DO's storage back to a fresh, empty state once a full day
+  passes with no activity. No demo session is meant to persist longer than that.
+- **`/events` uses the WebSocket Hibernation API**, not a plain `server.accept()` + in-memory
+  `Set<WebSocket>` — that lets Cloudflare evict the DO from memory between log/state pushes
+  instead of billing for the entire time a tab stays open. This means there is no `this.sockets`
+  field: `log()`/`broadcastState()` iterate `this.ctx.getWebSockets()` fresh each time (the
+  runtime tracks attached sockets independently of the instance, so this survives hibernation
+  where a plain field would not), and `webSocketMessage`/`webSocketClose`/`webSocketError` are
+  required no-op methods on the class — don't add socket bookkeeping back into instance state.
 
 ### `demo/` — the OAuth client sandbox
 
@@ -123,4 +134,10 @@ this is how the split-screen client/AS panels stay in sync without polling the A
 ### `site/` — the static explainer
 
 Single self-contained `index.html` (inline `<style>`, no external JS). No dynamic behavior beyond
-the inline sequence diagram and anchor navigation.
+the inline sequence diagram and anchor navigation. Also serves `robots.txt` (fully indexable —
+this is the canonical content page), `sitemap.xml`, and `llms.txt` as sibling static files in
+`site/public/` — keep these in sync with the page's own content/URL if either changes.
+`demo/public/robots.txt` disallows everything (the scenario pages are app shells, not content,
+and would otherwise dilute search/LLM relevance against this page); `idp/` isn't asset-served, so
+its `/robots.txt` (also disallow-everything) is a route in `idp/src/index.ts` answered before the
+`?session=` check, so crawlers get a real response instead of a 400.

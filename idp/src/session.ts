@@ -12,6 +12,7 @@ export const DEMO_CLIENT_SECRET = "demo-secret";
 const DEFERRAL_EXPIRES_IN = 600; // seconds
 const POLL_INTERVAL = 4; // seconds — short, so the demo doesn't feel like watching paint dry
 const FRAUD_REVIEW_THRESHOLD = 1000; // USD — transfers over this always go to fraud review
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // no demo session needs to outlive a day
 
 const ACCOUNT_STANDING: Record<string, string> = {
   "alice@example.com": "good",
@@ -128,7 +129,6 @@ export class DemoSession extends DurableObject<Env> {
   private grantedDocuments: string[] = [];
   private recipientHistory: RecipientHistory = {};
   private loaded = false;
-  private sockets: Set<WebSocket> = new Set();
 
   private async ensureLoaded() {
     if (this.loaded) return;
@@ -156,6 +156,18 @@ export class DemoSession extends DurableObject<Env> {
     await this.ctx.storage.put("recipientHistory", this.recipientHistory);
   }
 
+  // Fires when a full day passes with no request against this session (fetch() keeps pushing
+  // this out on every request). Wipes the session back to a fresh, empty state — nothing here
+  // needs to outlive that.
+  async alarm(): Promise<void> {
+    await this.ctx.storage.deleteAll();
+    this.deferral = null;
+    this.pendingAuthCode = null;
+    this.grantedDocuments = [];
+    this.recipientHistory = { ...DEFAULT_RECIPIENT_HISTORY };
+    this.loaded = true;
+  }
+
   private formatHistory(recipient: string): string {
     const entry = this.recipientHistory[recipient];
     if (!entry || entry.count === 0) return "no prior transfers in the last 30 days";
@@ -181,30 +193,36 @@ export class DemoSession extends DurableObject<Env> {
     await this.persistRecipientHistory();
   }
 
+  // Using ctx.getWebSockets() (not an in-memory Set) is what makes this survive hibernation —
+  // the DO can be evicted from memory between messages, and a plain field would lose its
+  // contents on the next wake. Cloudflare tracks attached sockets independently of the instance.
   private log(message: string, detail?: { request?: unknown; response?: unknown }) {
     const payload = JSON.stringify({ type: "log", ts: Date.now(), actor: "as", message, detail });
-    for (const socket of this.sockets) {
+    for (const socket of this.ctx.getWebSockets()) {
       try {
         socket.send(payload);
       } catch {
-        this.sockets.delete(socket);
+        // Cloudflare prunes closed sockets from getWebSockets() automatically.
       }
     }
   }
 
   private broadcastState() {
     const payload = JSON.stringify({ type: "state", state: this.deferral, grantedDocuments: this.grantedDocuments });
-    for (const socket of this.sockets) {
+    for (const socket of this.ctx.getWebSockets()) {
       try {
         socket.send(payload);
       } catch {
-        this.sockets.delete(socket);
+        // Cloudflare prunes closed sockets from getWebSockets() automatically.
       }
     }
   }
 
   async fetch(request: Request): Promise<Response> {
     await this.ensureLoaded();
+    // Rolling TTL: every request (including WebSocket keepalive/polling) pushes expiry out
+    // another day; a session untouched for a full day gets its storage cleared in alarm().
+    await this.ctx.storage.setAlarm(Date.now() + SESSION_TTL_MS);
     const url = new URL(request.url);
     const sessionId = url.searchParams.get("session") ?? "";
 
@@ -245,13 +263,19 @@ export class DemoSession extends DurableObject<Env> {
   private handleWebSocket(): Response {
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
-    server.accept();
-    this.sockets.add(server);
-    server.addEventListener("close", () => this.sockets.delete(server));
-    server.addEventListener("error", () => this.sockets.delete(server));
+    // Hibernation API: lets the runtime evict this DO from memory between pushes (these sockets
+    // are log/state push only, quiet in between) instead of billing the whole time a tab is open.
+    this.ctx.acceptWebSocket(server);
     server.send(JSON.stringify({ type: "state", state: this.deferral, grantedDocuments: this.grantedDocuments }));
     return new Response(null, { status: 101, webSocket: client });
   }
+
+  // Required for the Hibernation API to apply — no client-to-server messages are expected on
+  // this socket, it's log/state push only, and Cloudflare handles removing closed/errored
+  // sockets from ctx.getWebSockets() on its own.
+  async webSocketMessage(): Promise<void> {}
+  async webSocketClose(): Promise<void> {}
+  async webSocketError(): Promise<void> {}
 
   private authenticateClient(request: Request): string | null {
     const header = request.headers.get("Authorization") ?? "";
