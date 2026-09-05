@@ -28,16 +28,21 @@ npm run dev                          # wrangler dev, local preview
 npm run deploy                       # wrangler deploy, ships to the live *.deferred-token-response.dev domain
 ```
 
+`idp/` and `demo/` also have an ESLint flat config (`eslint.config.mjs`) and a `lint` script;
 `idp/` additionally has a typecheck step (no build/bundle step — Workers runs the TS directly):
 
 ```
+cd idp && npm run lint               # eslint .
 cd idp && npm run typecheck          # tsc --noEmit
+cd demo && npm run lint              # eslint .
 ```
 
-There is no test suite and no linter configured anywhere in this repo. `npm run deploy` deploys
-straight to the live custom domain (`site/`, `demo/`, `idp` are each mapped via `routes` in their
-`wrangler.jsonc`) — there is no staging environment, so verify locally or via `wrangler dev` before
-deploying anything user-facing.
+`site/` has no JS at all (see below), so there's nothing for it to lint. `.github/workflows/ci.yml`
+runs the `idp` and `demo` lint (+ `idp` typecheck) jobs on push/PR to `main` — it does not deploy;
+deploys are still a manual `npm run deploy` from your machine. There is no test suite. `npm run
+deploy` deploys straight to the live custom domain (`site/`, `demo/`, `idp` are each mapped via
+`routes` in their `wrangler.jsonc`) — there is no staging environment, so verify locally or via
+`wrangler dev` before deploying anything user-facing.
 
 ## Architecture
 
@@ -64,6 +69,12 @@ Key things to know before touching it:
   (`rar-client-credentials`, `fraud-review`) resolve via `/admin/decide` — a stand-in for "the
   resource owner or reviewer acts through the AS's own console," since there's no user the client
   can route an interaction link to.
+- **`id-jag` requests a fixed subject/resource against a fictional production database** (`db://prod-orders`),
+  with only the scope varying (`database.read` or `database.delete`, chosen via a dropdown in
+  `demo/public/id-jag/index.html` — subject/resource are no longer editable inputs). This is decided
+  in `handleIdJagRequest`, not in `handlePoll`: `database.read` returns a token synchronously
+  (skips deferral entirely, regardless of `completion_mode`); `database.delete` requires
+  `completion_mode=deferred` and always defers into the interaction flow above.
 - **Two real (not simulated) redirect-based consent flows** render server-side HTML and are meant
   to be opened as popups by the client: `/interact` (GET renders the ID-JAG interaction page, POST
   records the decision) and `/authorize` (a real Authorization Code consent screen for
@@ -94,13 +105,16 @@ its own `index.html` + `app.js` acting as a real OAuth client against `idp.defer
 just redirects into `id-jag/`; there's no scenario-picker landing page anymore.
 
 Common behavior — the log tray (with per-line expandable request/response detail), the hamburger
-menu for switching scenarios, the resizable log tray, and the pause/resume-polling helper
-(`window.DTR.pollingPaused` / `DTR.armResume(cb)`) — lives in `demo/public/shared.css` and
-`demo/public/shared.js`, loaded by every scenario page before its own `app.js`. **Do not
-re-duplicate this logic into a scenario's `app.js`** — that's exactly the pattern that caused a
-regression before (a fix landing in one scenario's copy but not the other two). Each scenario's own
-`app.js` only needs to declare `let pollTimer`/`pollInterval` and call `DTR.armResume(() =>
-poll(code))` inside its own `schedulePoll`.
+menu for switching scenarios, the resizable log tray, the pause/resume-polling helper
+(`window.DTR.pollingPaused` / `DTR.armResume(cb)`), and the demo OAuth client plumbing
+(`DTR.CLIENT_ID`/`CLIENT_SECRET`, `DTR.basicAuthHeader()`, `DTR.requestDetailFor(params)`,
+`DTR.setStatus(kind, text)`, `DTR.schedulePoll(pollState, pollFn)`) — lives in
+`demo/public/shared.css` and `demo/public/shared.js`, loaded by every scenario page before its own
+`app.js`. **Do not re-duplicate this logic into a scenario's `app.js`** — that's exactly the
+pattern that caused a regression before (a fix landing in one scenario's copy but not the other
+two). Each scenario's own `app.js` only needs to declare its own `const pollState = { timer: null,
+interval: 4 }` and call `DTR.schedulePoll(pollState, () => poll(code))` inside its own
+`schedulePoll` — `DTR.schedulePoll` owns the actual timer/pause-resume wiring.
 
 Each scenario page opens its own WebSocket to `wss://idp.deferred-token-response.dev/events?session=...`
 for live AS-side log lines and state pushes (`{type: "log", ...}` / `{type: "state", state, ...}`) —

@@ -18,9 +18,10 @@ independent Worker with its own `package.json`/`wrangler.jsonc` — there's no r
 `demo/` and `idp/` are built around three scenarios, each its own self-contained page in
 `demo/public/`, with a color-coded log of both the client's and the AS's side of every request:
 
-1. **ID-JAG + `interaction_required`** (`id-jag/`) — client exchanges an identity assertion, the
-   resource always requires human interaction, and the AS hands back an `interaction_uri` the
-   client opens as a popup for the user to approve or deny.
+1. **ID-JAG + `interaction_required`** (`id-jag/`) — client exchanges an identity assertion for
+   access to a (fictional) production database. Requesting `database.read` is granted
+   automatically; requesting `database.delete` always requires human interaction, and the AS hands
+   back an `interaction_uri` the client opens as a popup for the user to approve or deny.
 2. **`client_credentials` + Rich Authorization Requests, stateful document access** (`rar/`) — a
    machine client (no user in the grant) requests view access to one of three documents. The first
    request for a given document always defers to the resource owner; once granted, later requests
@@ -36,8 +37,10 @@ independent Worker with its own `package.json`/`wrangler.jsonc` — there's no r
 cd <site|demo|idp> && npm install && npm run dev
 ```
 
-`idp/` also has a typecheck script (`npm run typecheck`) — there's no build step for any of the
-three; `wrangler dev`/`deploy` run the source directly.
+`idp/` also has a typecheck script (`npm run typecheck`), and `idp/`+`demo/` both have an ESLint
+`lint` script — there's no build step for any of the three; `wrangler dev`/`deploy` run the source
+directly. `.github/workflows/ci.yml` runs lint (+ `idp` typecheck) on push/PR to `main`; it doesn't
+deploy anything.
 
 ## Deploy
 

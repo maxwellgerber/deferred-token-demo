@@ -4,11 +4,15 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint ."
   },
   "devDependencies": {
     "wrangler": "^4.29.0",
     "typescript": "^5.6.0",
-    "@cloudflare/workers-types": "^5.20250101.0"
+    "@cloudflare/workers-types": "^5.20250101.0",
+    "eslint": "^9.15.0",
+    "@eslint/js": "^9.15.0",
+    "typescript-eslint": "^8.15.0"
   }
 }

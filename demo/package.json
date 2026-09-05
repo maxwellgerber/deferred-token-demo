@@ -3,9 +3,13 @@
   "private": true,
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "lint": "eslint ."
   },
   "devDependencies": {
-    "wrangler": "^4.29.0"
+    "wrangler": "^4.29.0",
+    "eslint": "^9.15.0",
+    "@eslint/js": "^9.15.0",
+    "globals": "^15.12.0"
   }
 }
