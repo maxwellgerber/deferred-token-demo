@@ -3,10 +3,10 @@ const CLIENT_ID = "demo-client";
 const CLIENT_SECRET = "demo-secret";
 
 const sessionId = (() => {
-  const existing = localStorage.getItem("dtr-demo-session");
+  const existing = localStorage.getItem("dtr-demo-session-rar");
   if (existing) return existing;
   const fresh = crypto.randomUUID();
-  localStorage.setItem("dtr-demo-session", fresh);
+  localStorage.setItem("dtr-demo-session-rar", fresh);
   return fresh;
 })();
 document.getElementById("session-tag").textContent = `session ${sessionId.slice(0, 8)}`;
@@ -31,8 +31,27 @@ function basicAuthHeader() {
   return "Basic " + btoa(`${CLIENT_ID}:${CLIENT_SECRET}`);
 }
 
-// --- WebSocket to the AS's session Durable Object: AS-side logs + state push ---
+function buildAuthorizationDetails() {
+  return [
+    {
+      type: "payment_initiation",
+      actions: ["initiate"],
+      instructedAmount: { currency: "USD", amount: document.getElementById("f-amount").value },
+      creditorAccount: { iban: document.getElementById("f-iban").value },
+    },
+  ];
+}
+
+function renderDetailsPreview() {
+  document.getElementById("details-view").textContent = JSON.stringify(buildAuthorizationDetails(), null, 2);
+}
+document.getElementById("f-amount").addEventListener("input", renderDetailsPreview);
+document.getElementById("f-iban").addEventListener("input", renderDetailsPreview);
+renderDetailsPreview();
+
+// --- WebSocket to the AS's session Durable Object ---
 let ws;
+let currentStatus = null;
 function connectSocket() {
   ws = new WebSocket(`${IDP.replace("https://", "wss://")}/events?session=${encodeURIComponent(sessionId)}`);
   ws.addEventListener("message", (evt) => {
@@ -46,6 +65,12 @@ connectSocket();
 
 function renderAsState(state) {
   const dl = document.getElementById("as-state");
+  currentStatus = state ? state.status : null;
+  const approveBtn = document.getElementById("approve-btn");
+  const denyBtn = document.getElementById("deny-btn");
+  const decidable = currentStatus === "authorization_pending";
+  approveBtn.disabled = !decidable;
+  denyBtn.disabled = !decidable;
   if (!state) {
     dl.innerHTML = "<dt>status</dt><dd>no active request</dd>";
     return;
@@ -53,46 +78,21 @@ function renderAsState(state) {
   dl.innerHTML = `
     <dt>status</dt><dd>${state.status}</dd>
     <dt>deferral_code</dt><dd>${state.deferral_code.slice(0, 16)}…</dd>
-    <dt>subject</dt><dd>${state.subject}</dd>
-    <dt>resource</dt><dd>${state.resource}</dd>
-    <dt>scope</dt><dd>${state.scope}</dd>
+    <dt>authorization_details</dt><dd><pre style="margin:.2rem 0 0;">${(state.context.authorization_details || "").replace(/</g, "&lt;")}</pre></dd>
   `;
 }
 
-// --- Step 1: mint assertion ---
-let currentAssertion = null;
-document.getElementById("mint-btn").addEventListener("click", async () => {
-  const body = {
-    subject: document.getElementById("f-subject").value,
-    resource: document.getElementById("f-resource").value,
-    scope: document.getElementById("f-scope").value,
-  };
-  appendLog("client", `requesting a fresh ID-JAG for ${body.subject}`);
-  const res = await fetch(`${IDP}/admin/mint-assertion?session=${encodeURIComponent(sessionId)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  currentAssertion = data.assertion;
-  const view = document.getElementById("assertion-view");
-  view.style.display = "block";
-  view.textContent = JSON.stringify(data.claims, null, 2) + "\n\n" + data.assertion;
-  document.getElementById("send-btn").disabled = false;
-  appendLog("client", "assertion minted — ready to send the token request");
-});
-
-// --- Step 2: send the token request ---
+// --- Send token request ---
 document.getElementById("send-btn").addEventListener("click", async () => {
-  if (!currentAssertion) return;
   document.getElementById("send-btn").disabled = true;
   setStatus("pending", "sending token request…");
+  const details = buildAuthorizationDetails();
   const params = new URLSearchParams({
-    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-    assertion: currentAssertion,
+    grant_type: "client_credentials",
+    authorization_details: JSON.stringify(details),
     completion_mode: "deferred",
   });
-  appendLog("client", "POST /token  grant_type=jwt-bearer completion_mode=deferred");
+  appendLog("client", "POST /token  grant_type=client_credentials completion_mode=deferred");
   const res = await fetch(`${IDP}/token?session=${encodeURIComponent(sessionId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: basicAuthHeader() },
@@ -102,7 +102,7 @@ document.getElementById("send-btn").addEventListener("click", async () => {
   appendLog("client", `response ${res.status}: ${data.error ?? "ok"}`);
 
   if (data.error === "authorization_pending" && data.deferral_code) {
-    setStatus("pending", "authorization_pending — polling…");
+    setStatus("pending", "authorization_pending — waiting on the resource owner");
     startPolling(data.deferral_code, data.interval);
   } else {
     setStatus("error", data.error ?? "unexpected response");
@@ -110,7 +110,7 @@ document.getElementById("send-btn").addEventListener("click", async () => {
   }
 });
 
-// --- Step 3: poll ---
+// --- Poll ---
 let pollTimer = null;
 let pollInterval = 4;
 
@@ -134,24 +134,13 @@ async function poll(code) {
     setStatus("ok", "resolved");
     document.getElementById("result-card").style.display = "block";
     document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
-    document.getElementById("interaction-slot").innerHTML = "";
     return;
   }
 
   appendLog("client", `poll response: ${data.error}`);
-
   switch (data.error) {
     case "authorization_pending":
-      setStatus("pending", "authorization_pending — waiting on the authorization server");
-      schedulePoll(code);
-      return;
-    case "interaction_required":
-      setStatus("pending", "interaction_required — user action needed");
-      showInteractionLink(data.interaction_uri);
-      schedulePoll(code);
-      return;
-    case "interaction_pending":
-      setStatus("pending", "interaction_pending — user is deciding");
+      setStatus("pending", "authorization_pending — waiting on the resource owner");
       schedulePoll(code);
       return;
     case "slow_down":
@@ -179,29 +168,31 @@ function schedulePoll(code) {
   pollTimer = setTimeout(() => poll(code), pollInterval * 1000);
 }
 
-function showInteractionLink(uri) {
-  const slot = document.getElementById("interaction-slot");
-  if (slot.dataset.uri === uri) return;
-  slot.dataset.uri = uri;
-  slot.innerHTML = `<a class="interaction-link" target="_blank" rel="noopener" href="${uri}">Open interaction page →</a>`;
-  appendLog("client", "opening interaction_uri in a new tab for the user to decide");
-}
-
 function setStatus(kind, text) {
   const pill = document.getElementById("status-pill");
   pill.className = `status-pill ${kind}`;
   pill.textContent = text;
 }
 
+// --- Resource owner console ---
+async function decide(decision) {
+  document.getElementById("approve-btn").disabled = true;
+  document.getElementById("deny-btn").disabled = true;
+  await fetch(`${IDP}/admin/decide?session=${encodeURIComponent(sessionId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ decision }),
+  });
+}
+document.getElementById("approve-btn").addEventListener("click", () => decide("approve"));
+document.getElementById("deny-btn").addEventListener("click", () => decide("deny"));
+
 // --- Reset ---
 document.getElementById("reset-btn").addEventListener("click", async () => {
   clearTimeout(pollTimer);
   await fetch(`${IDP}/admin/reset?session=${encodeURIComponent(sessionId)}`, { method: "POST" });
-  currentAssertion = null;
-  document.getElementById("assertion-view").style.display = "none";
-  document.getElementById("send-btn").disabled = true;
+  document.getElementById("send-btn").disabled = false;
   document.getElementById("result-card").style.display = "none";
-  document.getElementById("interaction-slot").innerHTML = "";
   setStatus("idle", "idle");
   appendLog("client", "session reset");
 });
