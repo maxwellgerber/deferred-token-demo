@@ -39,8 +39,8 @@ cd <site|demo|idp> && npm install && npm run dev
 
 `idp/` also has a typecheck script (`npm run typecheck`), and `idp/`+`demo/` both have an ESLint
 `lint` script — there's no build step for any of the three; `wrangler dev`/`deploy` run the source
-directly. `.github/workflows/ci.yml` runs lint (+ `idp` typecheck) on push/PR to `main`; it doesn't
-deploy anything.
+directly. No CI is configured (a GitHub Actions workflow was tried and removed — `npm ci` hung
+reliably on the runner used at the time).
 
 ## Deploy
 

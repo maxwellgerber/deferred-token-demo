@@ -37,9 +37,10 @@ cd idp && npm run typecheck          # tsc --noEmit
 cd demo && npm run lint              # eslint .
 ```
 
-`site/` has no JS at all (see below), so there's nothing for it to lint. `.github/workflows/ci.yml`
-runs the `idp` and `demo` lint (+ `idp` typecheck) jobs on push/PR to `main` — it does not deploy;
-deploys are still a manual `npm run deploy` from your machine. There is no test suite. `npm run
+`site/` has no JS at all (see below), so there's nothing for it to lint. There's no CI configured
+(a GitHub Actions workflow was tried and removed — `npm ci` reliably hung for ~8 minutes then hit
+npm's own "Exit handler never called!" bug on the runner used at the time; if CI gets revisited,
+check whether that's still an issue before re-adding one). There is no test suite. `npm run
 deploy` deploys straight to the live custom domain (`site/`, `demo/`, `idp` are each mapped via
 `routes` in their `wrangler.jsonc`) — there is no staging environment, so verify locally or via
 `wrangler dev` before deploying anything user-facing.
