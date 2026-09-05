@@ -87,6 +87,22 @@
   .log-line.client .actor { color: var(--client); }
   .log-line.as .actor { color: var(--as); }
   .log-line .msg { color: var(--text); }
+
+  .menu-wrap { position: relative; }
+  .hamburger-btn {
+    font-size: 1rem; line-height: 1; background: var(--bg-raised); border: 1px solid var(--border);
+    border-radius: 6px; padding: .35rem .6rem; color: var(--text);
+  }
+  .menu-dropdown {
+    position: absolute; top: calc(100% + .5rem); right: 0; width: 280px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.18);
+    padding: .4rem; z-index: 20;
+  }
+  .menu-item { display: block; padding: .55rem .6rem; border-radius: 7px; text-decoration: none; color: var(--text); }
+  .menu-item:hover { background: var(--bg-raised); }
+  .menu-item.current { background: var(--accent-dim); }
+  .menu-kicker { font-size: .65rem; text-transform: uppercase; letter-spacing: .05em; color: var(--accent); font-weight: 700; }
+  .menu-title { font-size: .85rem; margin-top: .15rem; }
 </style>
 </head>
 <body>
@@ -96,7 +112,26 @@
   <div style="display:flex; gap:1rem; align-items:center;">
     <span class="session-tag" id="session-tag"></span>
     <button class="reset-btn" id="reset-btn">Reset session</button>
-    <a href="/">← All scenarios</a>
+    <div class="menu-wrap">
+      <button class="hamburger-btn" id="menu-btn" aria-label="All scenarios">☰</button>
+      <div class="menu-dropdown" id="menu-dropdown" hidden>
+        <a href="/id-jag/" class="menu-item">
+          <div class="menu-kicker">interaction_required</div>
+          <div class="menu-title">ID-JAG, human interaction required</div>
+        </a>
+        <a href="/rar/" class="menu-item">
+          <div class="menu-kicker">stateful, authorization_pending</div>
+          <div class="menu-title">client_credentials + document access (RAR)</div>
+        </a>
+        <a href="/fraud-review/" class="menu-item current">
+          <div class="menu-kicker">dual AS views</div>
+          <div class="menu-title">Fraud review after auth code consent</div>
+        </a>
+        <a href="https://deferred-token-response.dev" class="menu-item" target="_blank" rel="noopener">
+          <div class="menu-title">← DTR overview</div>
+        </a>
+      </div>
+    </div>
   </div>
 </header>
 

@@ -53,8 +53,8 @@ function renderAsState(state) {
   dl.innerHTML = `
     <dt>status</dt><dd>${state.status}</dd>
     <dt>deferral_code</dt><dd>${state.deferral_code.slice(0, 16)}…</dd>
-    <dt>subject</dt><dd>${state.subject}</dd>
-    <dt>resource</dt><dd>${state.resource}</dd>
+    <dt>subject</dt><dd>${state.context.subject}</dd>
+    <dt>resource</dt><dd>${state.context.resource}</dd>
     <dt>scope</dt><dd>${state.scope}</dd>
   `;
 }
@@ -135,6 +135,7 @@ async function poll(code) {
     document.getElementById("result-card").style.display = "block";
     document.getElementById("result-view").textContent = JSON.stringify(data, null, 2);
     document.getElementById("interaction-slot").innerHTML = "";
+    closeInteractionPopup();
     return;
   }
 
@@ -179,12 +180,25 @@ function schedulePoll(code) {
   pollTimer = setTimeout(() => poll(code), pollInterval * 1000);
 }
 
+let interactionPopup = null;
 function showInteractionLink(uri) {
   const slot = document.getElementById("interaction-slot");
   if (slot.dataset.uri === uri) return;
   slot.dataset.uri = uri;
-  slot.innerHTML = `<a class="interaction-link" target="_blank" rel="noopener" href="${uri}">Open interaction page →</a>`;
-  appendLog("client", "opening interaction_uri in a new tab for the user to decide");
+  slot.innerHTML = `<button class="btn interaction-link" id="interaction-btn">Open interaction page →</button>`;
+  document.getElementById("interaction-btn").addEventListener("click", () => {
+    interactionPopup = window.open(
+      uri,
+      "dtr-interaction",
+      "width=460,height=560,menubar=no,toolbar=no,location=no,status=no",
+    );
+  });
+  appendLog("client", "interaction_uri received — click to open it in a popup for the user to decide");
+}
+
+function closeInteractionPopup() {
+  if (interactionPopup && !interactionPopup.closed) interactionPopup.close();
+  interactionPopup = null;
 }
 
 function setStatus(kind, text) {
@@ -196,6 +210,7 @@ function setStatus(kind, text) {
 // --- Reset ---
 document.getElementById("reset-btn").addEventListener("click", async () => {
   clearTimeout(pollTimer);
+  closeInteractionPopup();
   await fetch(`${IDP}/admin/reset?session=${encodeURIComponent(sessionId)}`, { method: "POST" });
   currentAssertion = null;
   document.getElementById("assertion-view").style.display = "none";
@@ -204,4 +219,15 @@ document.getElementById("reset-btn").addEventListener("click", async () => {
   document.getElementById("interaction-slot").innerHTML = "";
   setStatus("idle", "idle");
   appendLog("client", "session reset");
+});
+
+// --- Hamburger menu ---
+const menuBtn = document.getElementById("menu-btn");
+const menuDropdown = document.getElementById("menu-dropdown");
+menuBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  menuDropdown.hidden = !menuDropdown.hidden;
+});
+document.addEventListener("click", (e) => {
+  if (!menuDropdown.hidden && !menuDropdown.contains(e.target) && e.target !== menuBtn) menuDropdown.hidden = true;
 });

@@ -574,7 +574,7 @@ function renderInteractPage(opts: {
   }
   if (opts.decided) {
     const approved = opts.status === "resolved" || opts.status === "redeemed";
-    return `<!doctype html><html><head><meta charset="utf-8"><title>Interaction — done</title><style>${style}</style></head><body><div class="card"><h1>idp.deferred-token-response.dev</h1><p class="result">${approved ? "✅ Approved" : "❌ Denied"}</p><p>You can close this tab and return to the demo — it already picked up the result.</p></div></body></html>`;
+    return `<!doctype html><html><head><meta charset="utf-8"><title>Interaction — done</title><style>${style}</style></head><body><div class="card"><h1>idp.deferred-token-response.dev</h1><p class="result">${approved ? "✅ Approved" : "❌ Denied"}</p><p>This window will close automatically — the demo already picked up the result.</p></div><script>setTimeout(() => window.close(), 1200);</script></body></html>`;
   }
   return `<!doctype html><html><head><meta charset="utf-8"><title>Approve request</title><style>${style}</style></head><body>
     <div class="card">

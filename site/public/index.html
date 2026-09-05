@@ -121,6 +121,17 @@
   .hero { padding: 3.5rem 0 2rem; }
   .hero h1 { font-size: 2.1rem; margin: 0 0 .6rem; letter-spacing: -.01em; }
   .hero .lede { font-size: 1.15rem; color: var(--text-dim); max-width: 62ch; }
+  .hero-cta {
+    display: inline-block;
+    margin-top: 1.4rem;
+    padding: .85rem 1.4rem;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 1rem;
+    color: var(--bg);
+    background: var(--accent);
+    text-decoration: none;
+  }
   .status-note {
     margin-top: 1.4rem;
     display: inline-block;
@@ -275,6 +286,7 @@
       <code>deferral_code</code> instead of an access token. The client uses the
       <code>deferral_code</code> to poll for a result.
     </p>
+    <a class="hero-cta" href="https://demo.deferred-token-response.dev" target="_blank" rel="noopener">Try the demo →</a>
     <div class="status-note">
       🚧 DTR is an IETF OAuth Working Group draft, and may change as the draft evolves. The
       latest copy can be found

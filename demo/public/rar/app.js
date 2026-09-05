@@ -196,3 +196,14 @@ document.getElementById("reset-btn").addEventListener("click", async () => {
   setStatus("idle", "idle");
   appendLog("client", "session reset");
 });
+
+// --- Hamburger menu ---
+const menuBtn = document.getElementById("menu-btn");
+const menuDropdown = document.getElementById("menu-dropdown");
+menuBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  menuDropdown.hidden = !menuDropdown.hidden;
+});
+document.addEventListener("click", (e) => {
+  if (!menuDropdown.hidden && !menuDropdown.contains(e.target) && e.target !== menuBtn) menuDropdown.hidden = true;
+});
