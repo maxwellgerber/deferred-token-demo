@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Deferred Token Response — an OAuth extension for asynchronous token issuance</title>
-<meta name="description" content="DTR lets an OAuth authorization server defer a token response and let the client poll or receive a callback when it resolves. An IETF OAuth Working Group draft.">
+<title>Deferred Token Response — Explore asynchronous OAuth authorization</title>
+<meta name="description" content="Explore how OAuth clients can wait for approvals and policy checks with Deferred Token Response. Try interactive demos with simulated requests and live protocol logs.">
 <style>
   :root {
     color-scheme: light dark;
@@ -109,6 +109,11 @@
     background: var(--accent);
     text-decoration: none;
   }
+  .cta.secondary {
+    color: var(--text);
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+  }
   .cta-soon {
     color: var(--text-dim);
     background: var(--bg-raised);
@@ -118,12 +123,21 @@
 
   main { max-width: 760px; margin: 0 auto; padding: 0 1.5rem 5rem; }
 
-  .hero { padding: 3.5rem 0 2rem; }
+  .hero { padding: 3.5rem 0 1.4rem; }
+  .hero .eyebrow {
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    font-size: .74rem;
+    color: var(--accent);
+    font-weight: 700;
+    margin-bottom: .6rem;
+  }
   .hero h1 { font-size: 2.1rem; margin: 0 0 .6rem; letter-spacing: -.01em; }
-  .hero .lede { font-size: 1.15rem; color: var(--text-dim); max-width: 62ch; }
+  .hero .promise { font-size: 1.2rem; font-weight: 600; margin: .4rem 0 1rem; }
+  .hero .lede { font-size: 1.08rem; color: var(--text-dim); max-width: 62ch; }
+  .hero-cta-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; margin-top: 1.4rem; }
   .hero-cta {
     display: inline-block;
-    margin-top: 1.4rem;
     padding: .85rem 1.4rem;
     border-radius: 8px;
     font-weight: 600;
@@ -132,17 +146,30 @@
     background: var(--accent);
     text-decoration: none;
   }
-  .status-note {
-    margin-top: 1.4rem;
-    display: inline-block;
+  .hero-cta-secondary {
+    font-size: .95rem;
+    font-weight: 600;
+    color: var(--text);
+    text-decoration: none;
+  }
+  .hero-cta-secondary:hover { color: var(--accent); }
+  .hero-support {
+    margin-top: .9rem;
     font-size: .85rem;
+    color: var(--text-dim);
+  }
+
+  .draft-notice {
+    margin: 1.6rem 0 3rem;
+    font-size: .88rem;
     line-height: 1.6;
     color: var(--text-dim);
     border: 1px solid var(--border);
     background: var(--bg-raised);
-    padding: .5rem .9rem;
-    border-radius: 8px;
+    padding: .9rem 1.1rem;
+    border-radius: 10px;
   }
+  .draft-notice a { font-weight: 600; }
 
   section { margin: 3.2rem 0; }
   section h2 {
@@ -187,6 +214,39 @@
     font-size: .93rem;
   }
   .callout.opt-in { border-color: var(--accent); background: var(--accent-dim); }
+
+  .scenario-cards { display: grid; gap: 1.1rem; margin: 1.6rem 0; }
+  .scenario-card {
+    border: 1px solid var(--border);
+    background: var(--bg-raised);
+    border-radius: 12px;
+    padding: 1.3rem 1.4rem;
+  }
+  .scenario-card.featured { border-color: var(--accent); background: var(--accent-dim); }
+  .scenario-badge {
+    display: inline-block;
+    font-size: .68rem;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    font-weight: 700;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 999px;
+    padding: .15rem .55rem;
+    margin-bottom: .6rem;
+  }
+  .scenario-card h3 { margin: 0 0 .5rem; font-size: 1.15rem; }
+  .scenario-card p { margin: .5rem 0; font-size: .93rem; color: var(--text-dim); }
+  .scenario-try {
+    font-size: .87rem;
+    color: var(--text);
+    background: var(--bg-code);
+    border-radius: 8px;
+    padding: .6rem .8rem;
+    margin: .9rem 0;
+  }
+  .scenario-try strong { color: var(--text); }
+  .scenario-card .cta { margin-top: .3rem; }
 
   table.params {
     width: 100%;
@@ -239,7 +299,7 @@
   }
   .steps h3 { margin-top: 0; }
 
-  .diagram-wrap { overflow-x: auto; margin: 1.6rem 0; }
+  .diagram-wrap { overflow-x: auto; margin: 1.6rem 0 .6rem; }
   .diagram-wrap svg { display: block; min-width: 640px; }
   .diagram-wrap text { fill: var(--text); font-family: var(--sans); }
   .diagram-wrap .mono { font-family: var(--mono); }
@@ -249,6 +309,7 @@
   .diagram-wrap .msg-pending { stroke: var(--pending); stroke-width: 1.5; fill: none; stroke-dasharray: 4 3; }
   .diagram-wrap .msg-ok { stroke: var(--ok); stroke-width: 1.5; fill: none; }
   .diagram-wrap .actor-box { fill: var(--bg-raised); stroke: var(--border); }
+  .diagram-caption { font-size: .85rem; color: var(--text-dim); margin: .6rem 0 1.6rem; }
 
   footer {
     border-top: 1px solid var(--border);
@@ -265,112 +326,167 @@
 <body>
 
 <header class="top">
-  <div class="brand">DTR <small>OAuth WG Draft</small></div>
+  <div class="brand">DTR <small>OAuth extension · draft</small></div>
   <nav class="top-links">
-    <a href="#oauth-basics">OAuth basics</a>
+    <a href="#scenarios">Try the scenarios</a>
     <a href="#why-dtr">Why DTR</a>
-    <a href="#flow">The flow</a>
-    <a href="#reference">Reference</a>
-    <a href="https://github.com/maxwellgerber/deferred-token-response" target="_blank" rel="noopener">GitHub</a>
+    <a href="#flow">How it works</a>
+    <a href="#reference">Protocol reference</a>
   </nav>
-  <a class="cta" href="https://demo.deferred-token-response.dev" target="_blank" rel="noopener">Try the demo →</a>
+  <a class="cta" href="https://demo.deferred-token-response.dev/fraud-review/" target="_blank" rel="noopener">Try fraud review →</a>
 </header>
 
 <main>
 
   <div class="hero">
+    <div class="eyebrow">Interactive OAuth explainer</div>
     <h1>Deferred Token Response</h1>
+    <p class="promise">Let authorization take the time it needs.</p>
     <p class="lede">
-      DTR is an OAuth extension for authorization decisions that can't complete synchronously.
-      When the authorization server needs more time, it hands the client a
-      <code>deferral_code</code> instead of an access token. The client uses the
-      <code>deferral_code</code> to poll for a result.
+      A user approves a transfer. The bank still needs to review it. What should the application
+      do while it waits?
     </p>
-    <a class="hero-cta" href="https://demo.deferred-token-response.dev" target="_blank" rel="noopener">Try the demo →</a>
-    <div class="status-note">
-      🚧 DTR is an IETF OAuth Working Group draft, and may change as the draft evolves. The
-      latest copy can be found
-      <a href="https://github.com/maxwellgerber/deferred-token-response" target="_blank" rel="noopener">here</a>.
+    <p class="lede">
+      Deferred Token Response (DTR) lets an OAuth authorization server respond with &ldquo;not
+      yet.&rdquo; Instead of an access token, the client receives a code it can use to check back
+      for the result. Access is granted only if the request is approved and a token is issued.
+    </p>
+    <p class="lede">
+      Explore both sides of that exchange: make a request, act as the reviewer, and watch the
+      client receive the result.
+    </p>
+    <div class="hero-cta-row">
+      <a class="hero-cta" href="https://demo.deferred-token-response.dev/fraud-review/" target="_blank" rel="noopener">Try fraud review →</a>
+      <a class="hero-cta-secondary" href="#scenarios">Explore all scenarios</a>
     </div>
+    <p class="hero-support">Sample inputs are included. Transfers and approvals are simulated; no real money moves.</p>
   </div>
 
-  <section id="oauth-basics">
-    <div class="section-kicker">Background</div>
-    <h2>The OAuth Framework</h2>
+  <div class="draft-notice">
+    DTR is an evolving OAuth proposal. This sandbox demonstrates selected behavior; the
+    specification defines the full protocol. Read the draft for requirements and security
+    considerations.
+    <br>
+    <a href="https://github.com/maxwellgerber/deferred-token-response" target="_blank" rel="noopener">Read the specification →</a>
+  </div>
+
+  <section id="scenarios">
+    <div class="section-kicker">Try it</div>
+    <h2>Three reasons a token might need to wait</h2>
     <p>
-      OAuth 2.1 is an authorization framework that enables an application to obtain limited
-      access to a protected resource, either on behalf of that resource's owner or on its own
-      behalf. For more information about OAuth, see
-      <a href="https://oauth.net/2/" target="_blank" rel="noopener">oauth.net</a> and the
-      <a href="https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1" target="_blank" rel="noopener">OAuth 2.1 draft</a>.
-      Here's a quick refresher on OAuth vocabulary:
+      Each scenario shows the client on the left, the authorization server on the right, and
+      their request logs below. Start with the sample values, then change one thing and compare
+      the result.
     </p>
-    <ul class="term-list">
-      <li><strong>Client</strong> — The application requesting access: a web app, a native app, an AI agent, or other software system.</li>
-      <li><strong>Authorization Server (AS)</strong> — Issues access tokens after authenticating the client and, where applicable, obtaining resource-owner consent.</li>
-      <li><strong>Resource Server (RS)</strong> — Hosts the protected API. It accepts access tokens and enforces the scope and identity they carry.</li>
-      <li><strong>Access Token</strong> — A credential the client presents to the resource server.</li>
-      <li><strong>OAuth Grant</strong> — A specific mechanism for a client to request and obtain an access token from an authorization server. Different grant types can be used under different circumstances, depending on the capabilities of the client, the resource being accessed, and whether resource-owner consent is required.</li>
-    </ul>
-    <p>
-      DTR adds one more idea: the token endpoint's response to a request can be neither a token
-      nor an error — it can be <em>not yet</em>.
-    </p>
+
+    <div class="scenario-cards">
+      <div class="scenario-card featured">
+        <div class="scenario-badge">Start here</div>
+        <h3>Fraud review after user consent</h3>
+        <p>
+          Alice approves a transfer, but a separate reviewer must clear transfers over $1,000.
+          See why user consent does not always mean a token can be issued immediately.
+        </p>
+        <div class="scenario-try">
+          <strong>Try this:</strong> Submit the sample $12,500 transfer, approve it as Alice, then
+          approve or deny it as the fraud reviewer. Compare with a $1,000 transfer, which needs no
+          fraud review.
+        </div>
+        <a class="cta" href="https://demo.deferred-token-response.dev/fraud-review/" target="_blank" rel="noopener">Try fraud review →</a>
+      </div>
+
+      <div class="scenario-card">
+        <h3>Document access that remembers approval</h3>
+        <p>
+          A service requests access to a document using its own credentials. The document owner
+          approves through a separate console. Once approved, later requests for the same
+          document receive a token immediately.
+        </p>
+        <div class="scenario-try">
+          <strong>Try this:</strong> Request the planning document and approve it. Request it
+          again, then switch to a different document. Watch which requests are deferred.
+        </div>
+        <a class="cta secondary" href="https://demo.deferred-token-response.dev/rar/" target="_blank" rel="noopener">Try document access →</a>
+      </div>
+
+      <div class="scenario-card">
+        <h3>Human interaction after an identity assertion</h3>
+        <p>
+          A client presents an identity assertion on Alice&rsquo;s behalf. The authorization
+          server still requires an additional approval and returns a link where that interaction
+          can happen.
+        </p>
+        <div class="scenario-try">
+          <strong>Try this:</strong> Mint the sample assertion, send the token request, and open
+          the interaction page. Approve or deny the request and watch the client learn the
+          outcome.
+        </div>
+        <a class="cta secondary" href="https://demo.deferred-token-response.dev/id-jag/" target="_blank" rel="noopener">Try identity assertion →</a>
+      </div>
+    </div>
   </section>
 
   <section id="why-dtr">
-    <div class="section-kicker">Motivation</div>
-    <h2>Why DTR</h2>
+    <div class="section-kicker">The problem</div>
+    <h2>Some authorization decisions take longer than a request</h2>
     <p>
-      Existing OAuth grants assume the authorization server can decide synchronously whether
-      to issue an access token. The
-      <a href="https://oauth.net/2/grant-types/authorization-code/" target="_blank" rel="noopener">Authorization Code Grant</a>,
-      <a href="https://oauth.net/2/grant-types/client-credentials/" target="_blank" rel="noopener">Client Credentials Grant</a>,
-      and assertion-based grants like the
-      <a href="https://datatracker.ietf.org/doc/draft-ietf-oauth-identity-assertion-authz-grant/" target="_blank" rel="noopener">Identity Assertion JWT Authorization Grant</a>
-      all respond to a token request immediately with either a token or an error. This means an
-      AS cannot use asynchronous processes while making an access control decision.
+      An application may have everything it needs to ask for access before the authorization
+      server has everything it needs to grant it. A fraud analyst might need to review a
+      transfer, a document owner might need to approve a service, or an automated check might
+      still be running.
     </p>
-    <p>Some authorization decisions can't complete synchronously:</p>
+    <p>
+      A token request normally ends with a token response or an error. DTR adds a defined way to
+      keep that authorization decision pending: the client opts in, the server returns a deferral
+      code, and the client checks for the eventual result.
+    </p>
+    <p>
+      The authorization server decides whether a particular request needs to wait. The same
+      client can receive an immediate token for one request and a deferred response for another.
+    </p>
     <div class="usecases">
       <div class="usecase">
-        <h4>Fraud prevention</h4>
-        <p>A sensitive operation triggers manual review by parties other than the resource owner.</p>
+        <h4>Fraud review</h4>
+        <p>A separate reviewer checks a sensitive request after the user has consented.</p>
       </div>
       <div class="usecase">
-        <h4>ID verification</h4>
-        <p>A submitted physical credential needs human inspection, which can take hours.</p>
+        <h4>Document approval</h4>
+        <p>A resource owner grants a service access through an internal review process.</p>
       </div>
       <div class="usecase">
-        <h4>Autonomous agent authorization</h4>
-        <p>An agent requests access beyond what was provisioned at enrollment and needs out-of-band approval.</p>
+        <h4>Agent authorization</h4>
+        <p>An agent requests access that needs an additional approval before it can proceed.</p>
       </div>
       <div class="usecase">
-        <h4>Governance workflows</h4>
-        <p>Enterprise governance workflows route the decision through approvers other than the resource owner.</p>
+        <h4>Long-running checks</h4>
+        <p>Identity verification or other policy checks finish after the original token request.</p>
       </div>
     </div>
-    <p>
-      Today, the authorization server's only option in each case is to return an error and
-      leave the client with no way to find out when — or whether — the request will eventually
-      be approved. DTR gives the ecosystem a new response mechanism: deferral.
-    </p>
-    <p>
-      DTR isn't the first protocol to poll for a delayed result — see
-      <a href="#device-and-ciba">what about Device Authorization and CIBA?</a>
-    </p>
   </section>
 
   <section id="flow">
-    <div class="section-kicker">Mechanism</div>
-    <h2>The basic flow</h2>
-    <p>
-      DTR runs entirely through the originating grant's existing endpoints. A client that opts
-      in gets back a <code>deferral_code</code> in place of a token, polls until the request
-      resolves, and then gets the token response it would have gotten synchronously.
-    </p>
+    <div class="section-kicker">The mechanism</div>
+    <h2>Request. Wait. Collect the result.</h2>
+    <ol class="steps">
+      <li>
+        <h3>The client opts in.</h3>
+        <p>It includes <code>completion_mode=deferred</code> in its token request to signal that it can handle a deferred response.</p>
+      </li>
+      <li>
+        <h3>The server defers the decision.</h3>
+        <p>It returns <code>authorization_pending</code>, a <code>deferral_code</code>, an expiry, and a minimum polling interval. No access token has been issued.</p>
+      </li>
+      <li>
+        <h3>The client checks back.</h3>
+        <p>It sends the deferral code to the token endpoint. The server reports whether the request is still pending or needs an external interaction.</p>
+      </li>
+      <li>
+        <h3>The request resolves.</h3>
+        <p>Approval allows the client to collect the token response. Denial or expiry ends the attempt without a token.</p>
+      </li>
+    </ol>
     <div class="diagram-wrap">
-      <svg viewBox="0 0 640 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sequence diagram: client requests a token, receives a deferred response, polls, and eventually receives the token result.">
+      <svg viewBox="0 0 640 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Client opts into deferred token issuance, receives a deferral code, polls while authorization is pending, and receives a token after approval.">
         <line class="lifeline" x1="90" y1="40" x2="90" y2="380"/>
         <line class="lifeline" x1="550" y1="40" x2="550" y2="380"/>
         <rect class="actor-box" x="20" y="10" width="140" height="34" rx="6"/>
@@ -386,20 +502,20 @@
         <text x="320" y="145" text-anchor="middle" font-size="11.5" class="dim mono">deferral_code, expires_in, interval</text>
 
         <rect x="60" y="175" width="520" height="90" rx="8" fill="none" stroke-dasharray="3 3" class="lifeline"/>
-        <text x="320" y="192" text-anchor="middle" font-size="11" class="dim">client polls no faster than "interval", repeating while pending</text>
+        <text x="320" y="192" text-anchor="middle" font-size="11" class="dim">Poll at the permitted interval while pending.</text>
 
         <line class="msg" x1="90" y1="215" x2="550" y2="215" marker-end="url(#arrow)"/>
-        <text x="320" y="207" text-anchor="middle" font-size="12" class="mono">POST /token  grant_type=deferred, deferral_code</text>
+        <text x="320" y="207" text-anchor="middle" font-size="12" class="mono">POST /token — deferred grant + deferral_code</text>
 
         <line class="msg-pending" x1="550" y1="250" x2="90" y2="250" marker-end="url(#arrow-pending)"/>
-        <text x="320" y="242" text-anchor="middle" font-size="12" class="mono">400 authorization_pending / interaction_required / …</text>
+        <text x="320" y="242" text-anchor="middle" font-size="12" class="mono">400 pending response</text>
 
         <line class="msg" x1="90" y1="300" x2="550" y2="300" marker-end="url(#arrow)"/>
-        <text x="320" y="292" text-anchor="middle" font-size="12.5" class="mono">POST /token  grant_type=deferred, deferral_code</text>
+        <text x="320" y="292" text-anchor="middle" font-size="12.5" class="mono">POST /token — deferred grant + deferral_code</text>
 
         <line class="msg-ok" x1="550" y1="345" x2="90" y2="345" marker-end="url(#arrow-ok)"/>
         <text x="320" y="335" text-anchor="middle" font-size="12.5" class="mono">200 OK</text>
-        <text x="320" y="360" text-anchor="middle" font-size="11.5" class="dim mono">access_token, token_type, expires_in, …</text>
+        <text x="320" y="360" text-anchor="middle" font-size="11.5" class="dim mono">access_token + token metadata</text>
 
         <defs>
           <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="var(--text)"/></marker>
@@ -408,53 +524,74 @@
         </defs>
       </svg>
     </div>
+    <p class="diagram-caption">
+      These examples use polling. The deferral code identifies a pending request; it does not
+      grant access to the protected resource.
+    </p>
   </section>
 
   <hr class="divider">
 
+  <section id="oauth-basics">
+    <div class="section-kicker">Background</div>
+    <h2>The OAuth terms used here</h2>
+    <p>
+      OAuth lets an application obtain limited access to a protected resource. These are the
+      roles you will see in the demos:
+    </p>
+    <table class="params">
+      <tr><th>Term</th><th>Meaning</th></tr>
+      <tr><td>Client</td><td>The application or service asking for access.</td></tr>
+      <tr><td>Authorization server</td><td>The system that evaluates the request and issues an access token when access is granted.</td></tr>
+      <tr><td>Resource server</td><td>The API or service that accepts the token and provides access to the protected resource.</td></tr>
+      <tr><td>Resource owner</td><td>The person or organization with authority over the resource. Some examples include an end user; others use a service acting on its own behalf.</td></tr>
+      <tr><td>Access token</td><td>A credential the client presents to a resource server.</td></tr>
+      <tr><td>Grant type</td><td>The mechanism the client uses to request a token, such as an authorization code or client credentials.</td></tr>
+      <tr><td>Deferral code</td><td>A code the client uses to retrieve the outcome of a pending token request. It is not an access token.</td></tr>
+    </table>
+    <p>
+      DTR extends the token response process. The original grant still establishes the basis for
+      the request; DTR handles what happens when the decision needs more time.
+    </p>
+    <p>
+      Further reading:
+      <a href="https://oauth.net/2/" target="_blank" rel="noopener">OAuth overview</a> ·
+      <a href="https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1" target="_blank" rel="noopener">OAuth 2.1 draft</a>
+    </p>
+  </section>
+
   <section id="reference">
-    <div class="section-kicker">Reference</div>
-    <h2>Step by step</h2>
+    <div class="section-kicker">On the wire</div>
+    <h2>Follow a deferred token request</h2>
+    <p>
+      The examples below show the polling path. Client authentication and other grant-specific
+      requirements still apply; they are omitted from these short examples.
+    </p>
 
     <ol class="steps">
       <li id="completion-mode">
-        <h3>Opting in: <code>completion_mode=deferred</code></h3>
+        <h3>Tell the server the client can wait</h3>
         <p>
-          DTR is opt-in from the client's side. An authorization server <strong>must not</strong>
-          defer a request unless the client has signaled it can handle one — an authorization
-          server that deferred responses to clients that weren't expecting them would break
-          those clients.
-        </p>
-        <p>
-          The signal is the <code>completion_mode</code> request parameter: a space-separated list
-          of values sent on the token request. This draft defines one value, <code>deferred</code>.
-          Including it tells the authorization server the client can handle a deferred response
-          in place of an immediate token or error; omitting it means the server must handle the
-          request synchronously, exactly as it does today.
+          The client includes <code>deferred</code> in the space-separated <code>completion_mode</code>
+          parameter. Without that opt-in, the server must not defer the token response using DTR.
         </p>
         <pre><code>POST /token HTTP/1.1
 Host: server.example.com
 Content-Type: application/x-www-form-urlencoded
 
-grant_type=authorization_code
-&amp;code=SplxlOBeZQQYbYS6WxSbIA
-&amp;redirect_uri=https%3A%2F%2Fclient.example.org%2Fcb
-&amp;completion_mode=deferred</code></pre>
+grant_type=authorization_code&amp;code=example_authorization_code&amp;redirect_uri=https%3A%2F%2Fclient.example.org%2Fcb&amp;completion_mode=deferred</code></pre>
         <p>
-          Sending it doesn't entitle the client to a deferred response — the server decides,
-          per-request, whether to defer at all. And for a grant with a preceding step (like the
-          authorization endpoint), the client can send the same parameter early, as an advance
-          hint, so the server can pick a deferral-aware path before the token request even
-          arrives.
+          Opting in does not force a delay. The server can still return a token immediately. For
+          grants with an earlier request step, the client can also send an advance hint there; the
+          token request must still carry the required opt-in.
         </p>
       </li>
 
       <li id="deferral-response">
-        <h3>The deferred response</h3>
+        <h3>Receive a deferral code</h3>
         <p>
-          When the server elects to defer, it returns an OAuth error response — HTTP 400, error
-          code <code>authorization_pending</code> — carrying a <code>deferral_code</code> instead
-          of a token. It's not a token response: no access is granted yet.
+          If the server needs more time, it returns an HTTP 400 OAuth error response with
+          <code>authorization_pending</code> and the information needed to continue.
         </p>
         <pre><code>HTTP/1.1 400 Bad Request
 Content-Type: application/json
@@ -462,127 +599,132 @@ Cache-Control: no-store
 
 {
   "error": "authorization_pending",
-  "deferral_code": "LRGidcSAeVs_xYpEDt5pNx0A0TBr7qPHbh_Se6pfdf4",
+  "deferral_code": "example_deferral_code",
   "expires_in": 10800,
   "interval": 60
 }</code></pre>
         <table class="params">
           <tr><th>Parameter</th><th>Meaning</th></tr>
-          <tr><td><code>deferral_code</code></td><td>Opaque, sender-constrained identifier for this pending request. Required for every subsequent poll.</td></tr>
-          <tr><td><code>expires_in</code></td><td>Seconds until the deferral code itself expires — not the eventual access token's lifetime.</td></tr>
-          <tr><td><code>interval</code></td><td>Minimum seconds the client must wait between polls.</td></tr>
-          <tr><td><code>interaction_uri</code></td><td>Optional here (required once the server returns <code>interaction_required</code>, below) — a URI where an external party can act on the request.</td></tr>
+          <tr><td><code>deferral_code</code></td><td>The opaque code used in later polls for this request. It must be handled according to the draft&rsquo;s client-binding and security requirements.</td></tr>
+          <tr><td><code>expires_in</code></td><td>Seconds until the deferral code expires. This is separate from an access token&rsquo;s lifetime.</td></tr>
+          <tr><td><code>interval</code></td><td>The minimum number of seconds between consecutive polls for this deferral code.</td></tr>
+          <tr><td><code>interaction_uri</code></td><td>A location where an external actor can act on the request. Optional in the initial deferred response; required with <code>interaction_required</code>.</td></tr>
         </table>
+        <p>
+          The HTTP error format does not mean the authorization request has been denied. Here, it
+          means the result is still pending.
+        </p>
       </li>
 
       <li id="polling">
-        <h3>Polling</h3>
+        <h3>Poll for the outcome</h3>
         <p>
-          The client redeems the deferral code with a new grant type reserved for this purpose,
-          at no faster than the given <code>interval</code>:
+          The client sends the deferral code to the token endpoint using the deferred grant type,
+          respecting the server&rsquo;s polling interval.
         </p>
         <pre><code>POST /token HTTP/1.1
 Host: server.example.com
 Content-Type: application/x-www-form-urlencoded
 
-grant_type=urn:ietf:params:oauth:grant-type:deferred
-&amp;deferral_code=LRGidcSAeVs_xYpEDt5pNx0A0TBr7qPHbh_Se6pfdf4</code></pre>
-        <p>Each poll returns either the final token response, or one of these errors:</p>
+grant_type=urn:ietf:params:oauth:grant-type:deferred&amp;deferral_code=example_deferral_code</code></pre>
         <ul class="error-list">
           <li class="pending">
             <span><code class="err">authorization_pending</code></span>
-            <span>Still pending, no external interaction outstanding. The client should keep polling at <code>interval</code>.</span>
+            <span>Continue polling at the permitted interval. The server has not returned a final result.</span>
           </li>
           <li class="pending">
             <span><code class="err">interaction_required</code></span>
-            <span>
-              Pending, and blocked on external interaction. The response will also include an
-              <code>interaction_uri</code>. The client should direct the user there, and keep
-              polling.
-            </span>
-          </li>
-          <li class="pending">
-            <span><code class="err">interaction_pending</code></span>
-            <span>
-              The interaction has been started (the user has reached <code>interaction_uri</code>,
-              or the server-side process has begun) but hasn't finished yet. The client should
-              keep polling.
-            </span>
+            <span>Present the supplied <code>interaction_uri</code> to the appropriate actor and continue polling at the permitted interval.</span>
           </li>
           <li>
             <span><code class="err">slow_down</code></span>
-            <span>Polling faster than <code>interval</code> allows. Increase the polling interval by at least 5 seconds before resuming polling.</span>
+            <span>Increase the polling interval by at least five seconds before continuing.</span>
           </li>
           <li class="terminal">
             <span><code class="err">expired_token</code></span>
-            <span>The deferral code's lifetime ran out. Terminal — the client must start a new flow if it still needs access.</span>
+            <span>Stop polling this code. Start a new flow if access is still needed.</span>
           </li>
           <li class="terminal">
             <span><code class="err">access_denied</code></span>
-            <span>The request was denied, or the deferral code was revoked. Terminal.</span>
+            <span>Stop polling. The request was denied or cancelled.</span>
+          </li>
+          <li class="terminal">
+            <span><code class="err">invalid_grant</code></span>
+            <span>Stop polling this code. It may be unknown, invalid for this client, or already redeemed.</span>
           </li>
         </ul>
         <p>
-          <code>authorization_pending</code>, <code>interaction_required</code>, and
-          <code>interaction_pending</code> are the only non-terminal states — a request can move
-          between them in either direction while it's pending.
+          Pending authorization responses and polling errors are different concepts. A pending
+          request can change state while the client waits; <code>slow_down</code> tells the client
+          to change its polling behavior. Denial, expiry, and invalid-grant responses end this
+          polling attempt.
         </p>
       </li>
 
       <li id="success">
-        <h3>Success: tokens returned</h3>
+        <h3>Collect the token response</h3>
         <p>
-          Once the request resolves, polling returns the same token response the originating
-          grant would have returned synchronously — nothing DTR-specific about its shape.
+          Once authorization is approved, a successful poll returns the token response the
+          original grant would have produced.
         </p>
         <pre><code>HTTP/1.1 200 OK
 Content-Type: application/json
 Cache-Control: no-store
 
 {
-  "access_token": "SlAV32hkKG",
+  "access_token": "example_access_token",
   "token_type": "Bearer",
-  "expires_in": 3600,
-  "refresh_token": "8xLOxBtZp8"
+  "expires_in": 3600
 }</code></pre>
         <p>
-          The deferral code is single-use: once it's been redeemed for a token response, any
-          further poll with the same code gets <code>invalid_grant</code>.
+          The deferral code is single-use. After it has been redeemed for a token response, another
+          poll with that code returns <code>invalid_grant</code>.
         </p>
       </li>
     </ol>
 
     <div class="callout">
-      Not covered here: callback notifications (an alternative to polling where the server notifies
-      the client's own endpoint when a request resolves), cancellation (revoking a deferral code
-      before it resolves), and sender-constraining a deferral code to a DPoP key. All three are in
-      <a href="https://github.com/maxwellgerber/deferred-token-response" target="_blank" rel="noopener">the full draft</a>.
+      The full draft also covers callback notifications, cancellation, and sender-constraining
+      with DPoP. These short examples focus on polling.
+      <br>
+      <a href="https://github.com/maxwellgerber/deferred-token-response" target="_blank" rel="noopener">Read the full protocol and security considerations →</a>
     </div>
   </section>
 
   <section id="device-and-ciba">
     <div class="section-kicker">Related work</div>
-    <h2>What about Device Authorization and CIBA?</h2>
+    <h2>How does this relate to Device Authorization and CIBA?</h2>
     <p>
-      DTR isn't the first OAuth mechanism built around polling for a delayed result. It's
-      deliberately not the
-      <a href="https://datatracker.ietf.org/doc/html/rfc8628" target="_blank" rel="noopener">Device Authorization Grant</a>:
-      device flow deferral is initiated by the client, and assumes the same end-user who started
-      the flow is the one who'll approve it. DTR deferral is initiated by the
-      <em>authorization server</em>, dynamically, based on policy or risk analysis — and makes no
-      assumption about who (or what, or whether anyone) completes the approval.
+      Other OAuth and OpenID Connect flows also support waiting for an external action. The
+      distinction is where that waiting fits into the flow.
     </p>
     <p>
-      It overlaps in mechanism with OpenID Connect
+      <a href="https://datatracker.ietf.org/doc/html/rfc8628" target="_blank" rel="noopener">Device Authorization</a>
+      is a dedicated grant in which a user authorizes a device through a separate interaction.
       <a href="https://openid.net/specs/openid-client-initiated-backchannel-authentication-core-1_0.html" target="_blank" rel="noopener">CIBA</a>
-      too — both issue an opaque identifier, define a polling mode governed by an
-      <code>interval</code>, and support a callback notification. But CIBA is a user-authentication
-      protocol: the client initiates it and must identify which user to contact up front (via
-      <code>login_hint</code> or similar). That means CIBA can't express deferral of a Client
-      Credentials Grant or a Token Exchange request — there's no end-user to identify. DTR decides
-      to defer at the token endpoint, independent of the originating grant's initiation pattern,
-      and makes no assumption about who resolves it.
+      is a backchannel authentication flow in which the client identifies a user to authenticate.
     </p>
+    <p>
+      DTR lets the authorization server defer a token response within an opted-in grant flow. It
+      does not require a particular user-interaction pattern: a request may wait for the user, a
+      separate reviewer, or an internal process.
+    </p>
+    <p>
+      The demos make that difference visible. The identity assertion example supplies an
+      interaction link. The document and fraud examples resolve through a separate server-side
+      review console.
+    </p>
+  </section>
+
+  <hr class="divider">
+
+  <section id="closing-cta">
+    <h2>See the decision happen</h2>
+    <p>
+      Start with fraud review: approve a transfer as the user, then decide its outcome as the
+      reviewer. Watch when the client finally receives its token.
+    </p>
+    <a class="hero-cta" href="https://demo.deferred-token-response.dev/fraud-review/" target="_blank" rel="noopener">Try fraud review →</a>
   </section>
 
 </main>
@@ -590,15 +732,15 @@ Cache-Control: no-store
 <footer>
   <div class="inner">
     <div>
-      Deferred Token Response is an individual Internet-Draft, accepted for adoption by the
-      <a href="https://datatracker.ietf.org/wg/oauth/about/" target="_blank" rel="noopener">IETF OAuth Working Group</a>.
-      Feedback and discussion on
-      <a href="https://github.com/maxwellgerber/deferred-token-response/issues" target="_blank" rel="noopener">GitHub</a> or the
-      <a href="https://mailarchive.ietf.org/arch/browse/oauth/" target="_blank" rel="noopener">oauth@ietf.org mailing list</a>.
+      Deferred Token Response is an evolving OAuth proposal. This sandbox is an educational
+      prototype with simulated requests and approvals.
     </div>
     <div>
-      <a href="https://github.com/maxwellgerber/deferred-token-response" target="_blank" rel="noopener">Draft source</a> ·
-      <a href="https://demo.deferred-token-response.dev" target="_blank" rel="noopener">Sandbox demo</a>
+      <a href="https://github.com/maxwellgerber/deferred-token-response" target="_blank" rel="noopener">Protocol draft</a> ·
+      <a href="https://github.com/maxwellgerber/deferred-token-demo" target="_blank" rel="noopener">Prototype source</a> ·
+      <a href="#scenarios">All scenarios</a> ·
+      <a href="https://github.com/maxwellgerber/deferred-token-response/issues" target="_blank" rel="noopener">Specification feedback</a> ·
+      <a href="https://mailarchive.ietf.org/arch/browse/oauth/" target="_blank" rel="noopener">OAuth mailing list</a>
     </div>
   </div>
 </footer>
