@@ -298,7 +298,7 @@
     <div class="section-kicker">Background</div>
     <h2>OAuth in four terms</h2>
     <p>
-      DTR is an extension to OAuth 2.1, so a quick refresher on the actors involved.
+      DTR is an extension to OAuth 2.1, so here's a quick refresher on the actors involved.
       If you already know this, skip to <a href="#why-dtr">why DTR exists</a>.
       For the full model, see <a href="https://oauth.net/2/">oauth.net</a> and
       <a href="https://datatracker.ietf.org/doc/html/draft-ietf-oauth-v2-1">the OAuth 2.1 draft</a>.
@@ -318,7 +318,7 @@
       </div>
       <div class="term-card">
         <h4>Access Token</h4>
-        <p>A credential the client presents to the resource server. In every existing grant, the token endpoint issues one immediately, or returns an error.</p>
+        <p>A credential the client presents to the resource server.</p>
       </div>
     </div>
     <p>
@@ -352,7 +352,7 @@
         <p>An agent requests access beyond what was provisioned at enrollment and needs out-of-band approval.</p>
       </div>
       <div class="usecase">
-        <h4>Complex authorization</h4>
+        <h4>Governance workflows</h4>
         <p>Enterprise governance workflows route the decision through approvers other than the resource owner.</p>
       </div>
     </div>
@@ -436,15 +436,15 @@
         <p>
           DTR is opt-in from the client's side. An authorization server <strong>must not</strong>
           defer a request unless the client has signaled it can handle one — an authorization
-          server that deferred responses to clients that weren't expecting them would break every
-          existing OAuth client on the internet.
+          server that deferred responses to clients that weren't expecting them would break
+          those clients.
         </p>
         <p>
           The signal is the <code>completion_mode</code> request parameter: a space-separated list
           of values sent on the token request. This draft defines one value, <code>deferred</code>.
-          Include it and you're telling the authorization server you can handle a deferred response
-          in place of an immediate token or error; omit it and the server must handle your request
-          synchronously, exactly as it does today.
+          Including it tells the authorization server the client can handle a deferred response
+          in place of an immediate token or error; omitting it means the server must handle the
+          request synchronously, exactly as it does today.
         </p>
         <pre><code>POST /token HTTP/1.1
 Host: server.example.com
@@ -456,9 +456,10 @@ grant_type=authorization_code
 &amp;completion_mode=deferred</code></pre>
         <p>
           Sending it doesn't entitle the client to a deferred response — the server decides,
-          per-request, whether to defer at all. And a grant with a preceding step (like the
-          authorization endpoint) can carry the same parameter early, as an advance hint, so the
-          server can pick a deferral-aware path before the token request even arrives.
+          per-request, whether to defer at all. And for a grant with a preceding step (like the
+          authorization endpoint), the client can send the same parameter early, as an advance
+          hint, so the server can pick a deferral-aware path before the token request even
+          arrives.
         </p>
       </li>
 
@@ -566,7 +567,7 @@ Cache-Control: no-store
     </ol>
 
     <div class="callout">
-      Not covered here: callback notifications (an alternative to polling where the server pings
+      Not covered here: callback notifications (an alternative to polling where the server notifies
       the client's own endpoint when a request resolves), and cancellation. Both are in
       <a href="https://github.com/maxwellgerber/deferred-token-response">the full draft</a>.
     </div>
