@@ -62,13 +62,3 @@ export async function verifyJwt(token: string, secret: string): Promise<DecodedJ
   }
   return { header, claims };
 }
-
-// Decode without verifying — used by the client-panel UI to display/edit an assertion
-// it already trusts because it was minted by this same demo a moment ago.
-export function decodeJwtUnsafe(token: string): DecodedJwt {
-  const [encodedHeader, encodedClaims] = token.split(".");
-  return {
-    header: JSON.parse(new TextDecoder().decode(base64urlDecode(encodedHeader))),
-    claims: JSON.parse(new TextDecoder().decode(base64urlDecode(encodedClaims))),
-  };
-}

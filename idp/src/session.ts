@@ -107,6 +107,19 @@ function escapeHtmlAttr(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function parseCompletionMode(form: FormData): string[] {
+  return String(form.get("completion_mode") ?? "").split(" ").filter(Boolean);
+}
+
+function mintAccessToken(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    access_token: `demo_at_${generateOpaqueId(96)}`,
+    token_type: "Bearer",
+    expires_in: 3600,
+    ...extra,
+  };
+}
+
 type RecipientHistory = Record<string, { total: number; count: number }>;
 
 export class DemoSession extends DurableObject<Env> {
@@ -300,14 +313,20 @@ export class DemoSession extends DurableObject<Env> {
   }
 
   private async handleAuthorizeDecision(request: Request): Promise<Response> {
-    const form = await request.formData();
+    const form = await request.formData().catch(() => null);
+    if (!form) return jsonResponse(400, { error: "invalid_request", error_description: "expected application/x-www-form-urlencoded" });
     const redirectUri = String(form.get("redirect_uri") ?? "");
     const scope = String(form.get("scope") ?? "wire_transfers.initiate");
     const state = String(form.get("state") ?? "");
     const decision = form.get("decision");
     const { details, amount, recipient, memo } = parsePaymentAuthorizationDetails(String(form.get("authorization_details") ?? "[]"));
 
-    const redirectUrl = new URL(redirectUri);
+    let redirectUrl: URL;
+    try {
+      redirectUrl = new URL(redirectUri);
+    } catch {
+      return jsonResponse(400, { error: "invalid_request", error_description: "invalid redirect_uri" });
+    }
     if (state) redirectUrl.searchParams.set("state", state);
 
     if (decision !== "approve") {
@@ -382,7 +401,7 @@ export class DemoSession extends DurableObject<Env> {
   // automatically; database.delete always requires human interaction. ---
 
   private async handleIdJagRequest(form: FormData, clientId: string): Promise<Response> {
-    const completionMode = String(form.get("completion_mode") ?? "").split(" ").filter(Boolean);
+    const completionMode = parseCompletionMode(form);
     const assertion = form.get("assertion");
     this.log(`token request received: grant_type=jwt-bearer completion_mode=${completionMode.join(",") || "(none)"}`);
 
@@ -415,12 +434,7 @@ export class DemoSession extends DurableObject<Env> {
 
     if (!scope.includes("database.delete")) {
       this.log("policy: database.read is granted automatically — no interaction needed");
-      return tokenSuccessResponse({
-        access_token: `demo_at_${generateOpaqueId(96)}`,
-        token_type: "Bearer",
-        expires_in: 3600,
-        scope,
-      });
+      return tokenSuccessResponse(mintAccessToken({ scope }));
     }
 
     if (!completionMode.includes("deferred")) {
@@ -450,7 +464,7 @@ export class DemoSession extends DurableObject<Env> {
   // authorization server's own console (this demo's AS panel), not an interaction_uri. ---
 
   private async handleClientCredentialsRequest(form: FormData, clientId: string): Promise<Response> {
-    const completionMode = String(form.get("completion_mode") ?? "").split(" ").filter(Boolean);
+    const completionMode = parseCompletionMode(form);
     const rawDetails = form.get("authorization_details");
     this.log(`token request received: grant_type=client_credentials completion_mode=${completionMode.join(",") || "(none)"}`);
 
@@ -469,12 +483,7 @@ export class DemoSession extends DurableObject<Env> {
     if (documentId && this.grantedDocuments.includes(documentId)) {
       this.log(`policy: ${documentId} was already granted to this client — issuing a token immediately, no deferral needed`);
       await this.clearDeferralForSynchronousResolution();
-      return tokenSuccessResponse({
-        access_token: `demo_at_${generateOpaqueId(96)}`,
-        token_type: "Bearer",
-        expires_in: 3600,
-        authorization_details: details,
-      });
+      return tokenSuccessResponse(mintAccessToken({ authorization_details: details }));
     }
 
     if (!completionMode.includes("deferred")) {
@@ -510,7 +519,7 @@ export class DemoSession extends DurableObject<Env> {
   // Transfers at or under the threshold are the AS's call to complete synchronously. ---
 
   private async handleAuthorizationCodeRequest(form: FormData, clientId: string): Promise<Response> {
-    const completionMode = String(form.get("completion_mode") ?? "").split(" ").filter(Boolean);
+    const completionMode = parseCompletionMode(form);
     const code = form.get("code");
     this.log(`token request received: grant_type=authorization_code completion_mode=${completionMode.join(",") || "(none)"}`);
 
@@ -530,13 +539,7 @@ export class DemoSession extends DurableObject<Env> {
       this.log(`policy: $${amount} is at or under the $${FRAUD_REVIEW_THRESHOLD.toLocaleString()} fraud-review threshold — issuing the token immediately`);
       await this.bumpRecipientHistory(recipient, amountNum);
       await this.clearDeferralForSynchronousResolution();
-      return tokenSuccessResponse({
-        access_token: `demo_at_${generateOpaqueId(96)}`,
-        token_type: "Bearer",
-        expires_in: 3600,
-        scope,
-        authorization_details: authorizationDetails,
-      });
+      return tokenSuccessResponse(mintAccessToken({ scope, authorization_details: authorizationDetails }));
     }
 
     if (!completionMode.includes("deferred")) {
@@ -663,11 +666,7 @@ export class DemoSession extends DurableObject<Env> {
       await this.persist();
       this.broadcastState();
       this.log("poll response: 200 OK — access_token issued, deferral_code redeemed");
-      const response: Record<string, unknown> = {
-        access_token: `demo_at_${generateOpaqueId(96)}`,
-        token_type: "Bearer",
-        expires_in: 3600,
-      };
+      const response = mintAccessToken();
       if (this.deferral.scope) response.scope = this.deferral.scope;
       if (this.deferral.authorizationDetails) response.authorization_details = this.deferral.authorizationDetails;
       return tokenSuccessResponse(response);
@@ -712,7 +711,8 @@ export class DemoSession extends DurableObject<Env> {
   private async handleInteractionDecision(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const sessionId = url.searchParams.get("session") ?? "";
-    const form = await request.formData();
+    const form = await request.formData().catch(() => null);
+    if (!form) return jsonResponse(400, { error: "invalid_request", error_description: "expected application/x-www-form-urlencoded" });
     const code = form.get("code");
     const decision = form.get("decision");
     if (!this.deferral || this.deferral.deferral_code !== code) {
@@ -777,6 +777,22 @@ export class DemoSession extends DurableObject<Env> {
   }
 }
 
+// Shared by renderInteractPage and renderAuthorizePage — both are small standalone consent
+// pages opened as a popup, with the same dark card-on-dark-background look.
+const CONSENT_PAGE_STYLE = `
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #101114; color: #eceef2; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+  .card { max-width: 440px; background: #17181d; border: 1px solid #2a2c34; border-radius: 12px; padding: 2rem; }
+  h1 { font-size: 1.05rem; margin-top: 0; color: #9a9fac; font-weight: 600; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: .3rem 1rem; font-size: .9rem; color: #9a9fac; margin: 1.2rem 0; }
+  dt { font-weight: 600; color: #eceef2; }
+  dd { margin: 0; word-break: break-all; }
+  pre { background: #1b1c22; border: 1px solid #2a2c34; border-radius: 8px; padding: .7rem .8rem; font-size: .74rem; line-height: 1.5; overflow-x: auto; color: #9a9fac; margin: 0 0 1.2rem; }
+  button { font-size: .95rem; font-weight: 600; padding: .6rem 1.2rem; border-radius: 8px; border: none; cursor: pointer; margin-right: .6rem; }
+  .approve { background: #4fd188; color: #05170c; }
+  .deny { background: #ff6b64; color: #200604; }
+  .result { font-size: 1.3rem; font-weight: 600; }
+`;
+
 function renderInteractPage(opts: {
   notFound?: boolean;
   sessionId?: string;
@@ -788,18 +804,7 @@ function renderInteractPage(opts: {
   decided?: boolean;
   status?: string;
 }): string {
-  const style = `
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #101114; color: #eceef2; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
-    .card { max-width: 420px; background: #17181d; border: 1px solid #2a2c34; border-radius: 12px; padding: 2rem; }
-    h1 { font-size: 1.05rem; margin-top: 0; color: #9a9fac; font-weight: 600; }
-    dl { display: grid; grid-template-columns: auto 1fr; gap: .3rem 1rem; font-size: .9rem; color: #9a9fac; margin: 1.2rem 0; }
-    dt { font-weight: 600; color: #eceef2; }
-    dd { margin: 0; word-break: break-all; }
-    button { font-size: .95rem; font-weight: 600; padding: .6rem 1.2rem; border-radius: 8px; border: none; cursor: pointer; margin-right: .6rem; }
-    .approve { background: #4fd188; color: #05170c; }
-    .deny { background: #ff6b64; color: #200604; }
-    .result { font-size: 1.3rem; font-weight: 600; }
-  `;
+  const style = CONSENT_PAGE_STYLE;
   if (opts.notFound) {
     return `<!doctype html><html><head><meta charset="utf-8"><title>Interaction — not found</title><style>${style}</style></head><body><div class="card"><h1>Request not found</h1><p>This interaction link is invalid or the session has been reset.</p></div></body></html>`;
   }
@@ -810,13 +815,13 @@ function renderInteractPage(opts: {
   return `<!doctype html><html><head><meta charset="utf-8"><title>Approve request</title><style>${style}</style></head><body>
     <div class="card">
       <h1>idp.deferred-token-response.dev</h1>
-      <p><strong>${opts.clientId}</strong> is requesting access on behalf of <strong>${opts.subject}</strong>.</p>
+      <p><strong>${escapeHtmlAttr(opts.clientId ?? "")}</strong> is requesting access on behalf of <strong>${escapeHtmlAttr(opts.subject ?? "")}</strong>.</p>
       <dl>
-        <dt>Resource</dt><dd>${opts.resource}</dd>
-        <dt>Scope</dt><dd>${opts.scope}</dd>
+        <dt>Resource</dt><dd>${escapeHtmlAttr(opts.resource ?? "")}</dd>
+        <dt>Scope</dt><dd>${escapeHtmlAttr(opts.scope ?? "")}</dd>
       </dl>
       <form method="POST" action="/interact?session=${encodeURIComponent(opts.sessionId ?? "")}">
-        <input type="hidden" name="code" value="${opts.code}">
+        <input type="hidden" name="code" value="${escapeHtmlAttr(opts.code ?? "")}">
         <button class="approve" name="decision" value="approve">Approve</button>
         <button class="deny" name="decision" value="deny">Deny</button>
       </form>
@@ -834,35 +839,24 @@ function renderAuthorizePage(opts: {
   scope: string;
   state: string;
 }): string {
-  const style = `
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #101114; color: #eceef2; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
-    .card { max-width: 440px; background: #17181d; border: 1px solid #2a2c34; border-radius: 12px; padding: 2rem; }
-    h1 { font-size: 1.05rem; margin-top: 0; color: #9a9fac; font-weight: 600; }
-    dl { display: grid; grid-template-columns: auto 1fr; gap: .3rem 1rem; font-size: .9rem; color: #9a9fac; margin: 1.2rem 0; }
-    dt { font-weight: 600; color: #eceef2; }
-    dd { margin: 0; word-break: break-all; }
-    pre { background: #1b1c22; border: 1px solid #2a2c34; border-radius: 8px; padding: .7rem .8rem; font-size: .74rem; line-height: 1.5; overflow-x: auto; color: #9a9fac; margin: 0 0 1.2rem; }
-    button { font-size: .95rem; font-weight: 600; padding: .6rem 1.2rem; border-radius: 8px; border: none; cursor: pointer; margin-right: .6rem; }
-    .approve { background: #4fd188; color: #05170c; }
-    .deny { background: #ff6b64; color: #200604; }
-  `;
+  const style = CONSENT_PAGE_STYLE;
   return `<!doctype html><html><head><meta charset="utf-8"><title>Sign in to approve</title><style>${style}</style></head><body>
     <div class="card">
       <h1>idp.deferred-token-response.dev</h1>
       <p><strong>demo-client</strong> is requesting your approval, <strong>alice@example.com</strong>.</p>
       <dl>
-        <dt>Amount</dt><dd>$${opts.amount}</dd>
-        <dt>Recipient</dt><dd>${opts.recipient}</dd>
-        <dt>Memo</dt><dd>${opts.memo || "(none)"}</dd>
-        <dt>Scope</dt><dd>${opts.scope}</dd>
+        <dt>Amount</dt><dd>$${escapeHtmlAttr(opts.amount)}</dd>
+        <dt>Recipient</dt><dd>${escapeHtmlAttr(opts.recipient)}</dd>
+        <dt>Memo</dt><dd>${escapeHtmlAttr(opts.memo) || "(none)"}</dd>
+        <dt>Scope</dt><dd>${escapeHtmlAttr(opts.scope)}</dd>
       </dl>
       <p style="font-size:.78rem; color:#565a66; margin:0 0 .4rem;">authorization_details (RFC 9396):</p>
       <pre>${escapeHtmlAttr(JSON.stringify(opts.authorizationDetails, null, 2))}</pre>
       <form method="POST" action="/authorize?session=${encodeURIComponent(opts.sessionId)}">
         <input type="hidden" name="redirect_uri" value="${escapeHtmlAttr(opts.redirectUri)}">
         <input type="hidden" name="authorization_details" value="${escapeHtmlAttr(JSON.stringify(opts.authorizationDetails))}">
-        <input type="hidden" name="scope" value="${opts.scope}">
-        <input type="hidden" name="state" value="${opts.state}">
+        <input type="hidden" name="scope" value="${escapeHtmlAttr(opts.scope)}">
+        <input type="hidden" name="state" value="${escapeHtmlAttr(opts.state)}">
         <button class="approve" name="decision" value="approve">Approve</button>
         <button class="deny" name="decision" value="deny">Deny</button>
       </form>
