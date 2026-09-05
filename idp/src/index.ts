@@ -31,6 +31,12 @@ export default {
       return jsonResponse(200, DISCOVERY_METADATA);
     }
 
+    // Not a content host — disallow everything, and answer before the ?session= check below so
+    // crawlers get a real robots.txt instead of a 400.
+    if (url.pathname === "/robots.txt") {
+      return new Response("User-agent: *\nDisallow: /\n", { headers: { "Content-Type": "text/plain" } });
+    }
+
     const sessionId = url.searchParams.get("session");
     if (!sessionId) {
       return jsonResponse(400, { error: "invalid_request", error_description: "missing ?session= identifier" });

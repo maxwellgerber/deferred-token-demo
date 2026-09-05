@@ -1,0 +1,34 @@
+# Deferred Token Response
+
+> Deferred Token Response (DTR) is an OAuth extension that lets an authorization server return a
+> deferral_code instead of an access token when a decision needs more time, and lets the client
+> poll the token endpoint until it resolves.
+
+DTR adds a defined way to keep an authorization decision pending: a token request normally ends
+with a token response or an error, but the authorization server decides per-request whether it
+needs to wait — the same client can get an immediate token for one request and a deferred
+response for another. A request might wait on a fraud reviewer, a document owner's approval, an
+agent-authorization check, or a long-running policy/identity check.
+
+## Mechanism
+
+1. The client opts in by including `completion_mode=deferred` in its token request.
+2. The server defers the decision, returning `authorization_pending`, a `deferral_code`, an
+   expiry, and a minimum polling interval — no access token is issued yet.
+3. The client polls the token endpoint with the deferral code at the permitted interval. The
+   server reports whether the request is still pending, needs external interaction
+   (`interaction_required`), or should back off (`slow_down`).
+4. The request resolves: approval returns the token response; denial or expiry
+   (`access_denied`/`expired_token`) ends the attempt without a token.
+
+## Docs
+
+- [Homepage](https://deferred-token-response.dev/): protocol overview, interactive scenario
+  walkthroughs, OAuth vocabulary, and a full wire-level request/response reference.
+- [IETF Draft](https://datatracker.ietf.org/doc/draft-gerber-oauth-deferred-token-response/): the
+  full specification.
+- [GitHub — spec](https://github.com/maxwellgerber/deferred-token-response): specification source
+  and issue tracker.
+- [Live demo](https://demo.deferred-token-response.dev/): a real OAuth client sandbox against a
+  real (demo) authorization server, three scenarios (identity-assertion interaction, Rich
+  Authorization Requests, fraud review after user consent).
