@@ -92,23 +92,27 @@
     text-transform: uppercase;
     letter-spacing: .04em;
   }
-  nav.top-links { display: flex; gap: 1.25rem; font-size: .92rem; flex-wrap: wrap; }
+  nav.top-links { display: flex; align-items: center; gap: 1.25rem; font-size: .92rem; flex-wrap: wrap; }
   nav.top-links a { color: var(--text-dim); text-decoration: none; }
   nav.top-links a:hover { color: var(--text); }
-  nav.top-links a.cta {
-    color: var(--bg);
-    background: var(--accent);
-    padding: .35rem .8rem;
+  .cta, .cta-soon {
+    flex-shrink: 0;
+    align-self: center;
+    line-height: 1;
+    padding: .6rem .9rem;
     border-radius: 6px;
     font-weight: 600;
+    font-size: .92rem;
   }
-  nav.top-links span.cta-soon {
+  .cta {
+    color: var(--bg);
+    background: var(--accent);
+    text-decoration: none;
+  }
+  .cta-soon {
     color: var(--text-dim);
     background: var(--bg-raised);
     border: 1px solid var(--border);
-    padding: .35rem .8rem;
-    border-radius: 6px;
-    font-weight: 600;
     cursor: default;
   }
 
@@ -119,10 +123,9 @@
   .hero .lede { font-size: 1.15rem; color: var(--text-dim); max-width: 62ch; }
   .status-note {
     margin-top: 1.4rem;
-    display: inline-flex;
-    gap: .5rem;
-    align-items: center;
+    display: inline-block;
     font-size: .85rem;
+    line-height: 1.6;
     color: var(--text-dim);
     border: 1px solid var(--border);
     background: var(--bg-raised);
@@ -271,8 +274,8 @@
     <a href="#flow">The flow</a>
     <a href="#reference">Reference</a>
     <a href="https://github.com/maxwellgerber/deferred-token-response">GitHub</a>
-    <a class="cta" href="https://demo.deferred-token-response.dev">Try the demo →</a>
   </nav>
+  <a class="cta" href="https://demo.deferred-token-response.dev">Try the demo →</a>
 </header>
 
 <main>
