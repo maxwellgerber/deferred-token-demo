@@ -16,9 +16,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: idp/package-lock.json
-      - run: npm ci
+      - name: npm ci (retry on registry stalls)
+        run: |
+          for i in 1 2 3; do
+            timeout 120 npm ci --no-audit --no-fund && exit 0
+            echo "npm ci attempt $i failed or timed out, retrying..."
+            sleep 5
+          done
+          exit 1
       - run: npm run lint
       - run: npm run typecheck
 
@@ -32,7 +37,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: demo/package-lock.json
-      - run: npm ci
+      - name: npm ci (retry on registry stalls)
+        run: |
+          for i in 1 2 3; do
+            timeout 120 npm ci --no-audit --no-fund && exit 0
+            echo "npm ci attempt $i failed or timed out, retrying..."
+            sleep 5
+          done
+          exit 1
       - run: npm run lint
